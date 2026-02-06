@@ -13,6 +13,12 @@
 - **Scope**: Need to parse Anthropic API `tool_use` content blocks, implement tool execution loop
 - **Note**: Anthropic tool_use format differs from OpenAI — uses content blocks, not function_call
 
+### [ ] Memory Write via Tool Use (agent-driven memory persistence)
+- **openclaw**: Agent uses standard `write`/`edit` tools to write `MEMORY.md` and `memory/YYYY-MM-DD.md`; system prompt instructs agent to persist important information; pre-compaction memory flush triggers a silent agent turn to save durable memories before context window limit
+- **MimiClaw**: `memory_write_long_term` and `memory_append_today` exist but are only called from CLI; agent loop never writes memory
+- **Scope**: Expose `memory_write` and `memory_append_today` as tool_use tools for Claude; add system prompt guidance on when to persist memory; optionally add pre-compaction flush (trigger memory save when session history nears `MIMI_SESSION_MAX_MSGS`)
+- **Depends on**: Tool Use Loop
+
 ### [ ] Tool Registry + Built-in Tools
 - **nanobot**: `tools/registry.py` — dynamic tool registration/execution, `tools/base.py` defines abstract Tool base class
 - **nanobot built-in tools**:
@@ -130,10 +136,8 @@
 - **MimiClaw**: Only Telegram + WebSocket
 - **Recommendation**: Low priority, Telegram is sufficient
 
-### [ ] Telegram Proxy Support (HTTP/SOCKS5)
-- **nanobot**: `config/schema.py` L20 — TelegramConfig supports proxy field
-- **MimiClaw**: No proxy support
-- **Recommendation**: esp_http_client supports proxy, configurable via NVS
+### [x] ~~Telegram Proxy Support (HTTP CONNECT)~~
+- Implemented: HTTP CONNECT tunnel via `proxy/http_proxy.c`, configurable via NVS + CLI (`set_proxy`/`clear_proxy`)
 
 ### [ ] Session Metadata Persistence
 - **nanobot**: `session/manager.py` L136-153 — session file includes metadata line (created_at, updated_at)
@@ -152,7 +156,8 @@
 - [x] Memory Store (MEMORY.md + daily notes)
 - [x] Session Manager (JSONL per chat_id, ring buffer history)
 - [x] WebSocket Gateway (port 18789, JSON protocol)
-- [x] Serial CLI (esp_console, 12 commands)
+- [x] Serial CLI (esp_console, 14 commands)
+- [x] HTTP CONNECT Proxy (Telegram + Claude API via proxy tunnel)
 - [x] OTA Update
 - [x] WiFi Manager (NVS credentials, exponential backoff)
 - [x] SPIFFS storage
@@ -164,7 +169,8 @@
 
 ```
 1. Tool Use Loop + Tool Registry    <- this determines whether the agent is truly "intelligent"
-2. Built-in Tools (read_file, write_file, message)
+2. Memory Write via Tool Use         <- makes the agent actually remember
+3. Built-in Tools (read_file, write_file, message)
 3. Telegram Allowlist (allow_from)   <- security essential
 4. Bootstrap File Completion (AGENTS.md, TOOLS.md)
 5. Subagent (simplified)
