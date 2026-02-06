@@ -1,12 +1,12 @@
-# MimiClaw: Pocket AI Agent
+# MimiClaw: Pocket AI Assitant on $5 chips
 
 <p align="center">
   <img src="assets/banner.png" alt="MimiClaw" width="480" />
 </p>
 
-**Your own AI assistant on a $10 chip. Chat on Telegram. Remembers everything. No cloud server needed.**
+**The world's first AI assistant on a $5 chip. No Linux. No Node.js. Just pure C**
 
-MimiClaw turns a tiny ESP32-S3 board into a personal AI assistant. Plug it into USB power, connect to WiFi, and talk to it through Telegram — it thinks with Claude and remembers your conversations in plain text files, all running on a chip the size of a thumb.
+MimiClaw turns a tiny ESP32-S3 board into a personal AI assistant. Plug it into USB power, connect to WiFi, and talk to it through Telegram — it handles any task you throw at it and evolves over time with local memory — all on a chip the size of a thumb.
 
 ## What It Does
 
@@ -14,7 +14,7 @@ MimiClaw turns a tiny ESP32-S3 board into a personal AI assistant. Plug it into 
 - **Remembers you** — long-term memory + daily notes, survives reboots and power loss
 - **Always on** — plug into USB, it runs 24/7 on ~0.5W
 - **Private** — your conversations stay on your device, not someone else's server
-- **$10 hardware** — just an ESP32-S3 dev board, nothing else
+- **$5 hardware** — just an ESP32-S3 dev board, nothing else
 
 ## How It Works
 
@@ -107,4 +107,4 @@ MIT
 
 ## Acknowledgments
 
-Inspired by [OpenClaw](https://github.com/openclaw/openclaw). MimiClaw reimplements the core AI agent architecture for embedded hardware — no Linux, no server, just a $10 chip.
+Inspired by [OpenClaw](https://github.com/openclaw/openclaw). MimiClaw reimplements the core AI agent architecture for embedded hardware — no Linux, no server, just a $5 chip.

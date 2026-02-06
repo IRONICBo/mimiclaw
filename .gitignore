@@ -33,6 +33,9 @@ mmap_generate_*.h
 *.pyc
 *.bin
 
+# Reference repos
+nanobot/
+
 # OS
 .DS_Store
 Thumbs.db
