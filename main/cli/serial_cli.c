@@ -102,6 +102,24 @@ static int cmd_set_model(int argc, char **argv)
     return 0;
 }
 
+/* --- set_model_provider command --- */
+static struct {
+    struct arg_str *provider;
+    struct arg_end *end;
+} provider_args;
+
+static int cmd_set_model_provider(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&provider_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, provider_args.end, argv[0]);
+        return 1;
+    }
+    llm_set_provider(provider_args.provider->sval[0]);
+    printf("Model provider set.\n");
+    return 0;
+}
+
 /* --- memory_read command --- */
 static int cmd_memory_read(int argc, char **argv)
 {
@@ -223,6 +241,15 @@ static int cmd_set_search_key(int argc, char **argv)
     return 0;
 }
 
+/* --- wifi_scan command --- */
+static int cmd_wifi_scan(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    wifi_manager_scan_and_print();
+    return 0;
+}
+
 /* --- config_show command --- */
 static void print_config(const char *label, const char *ns, const char *key,
                          const char *build_val, bool mask)
@@ -263,6 +290,7 @@ static int cmd_config_show(int argc, char **argv)
     print_config("TG Token",   MIMI_NVS_TG,     MIMI_NVS_KEY_TG_TOKEN, MIMI_SECRET_TG_TOKEN,   true);
     print_config("API Key",    MIMI_NVS_LLM,    MIMI_NVS_KEY_API_KEY,  MIMI_SECRET_API_KEY,    true);
     print_config("Model",      MIMI_NVS_LLM,    MIMI_NVS_KEY_MODEL,    MIMI_SECRET_MODEL,      false);
+    print_config("Provider",   MIMI_NVS_LLM,    MIMI_NVS_KEY_PROVIDER, MIMI_SECRET_MODEL_PROVIDER, false);
     print_config("Proxy Host", MIMI_NVS_PROXY,  MIMI_NVS_KEY_PROXY_HOST, MIMI_SECRET_PROXY_HOST, false);
     print_config("Proxy Port", MIMI_NVS_PROXY,  MIMI_NVS_KEY_PROXY_PORT, MIMI_SECRET_PROXY_PORT, false);
     print_config("Search Key", MIMI_NVS_SEARCH, MIMI_NVS_KEY_API_KEY,  MIMI_SECRET_SEARCH_KEY, true);
@@ -332,6 +360,14 @@ esp_err_t serial_cli_init(void)
     };
     esp_console_cmd_register(&wifi_status_cmd);
 
+    /* wifi_scan */
+    esp_console_cmd_t wifi_scan_cmd = {
+        .command = "wifi_scan",
+        .help = "Scan and list nearby WiFi APs",
+        .func = &cmd_wifi_scan,
+    };
+    esp_console_cmd_register(&wifi_scan_cmd);
+
     /* set_tg_token */
     tg_token_args.token = arg_str1(NULL, NULL, "<token>", "Telegram bot token");
     tg_token_args.end = arg_end(1);
@@ -344,11 +380,11 @@ esp_err_t serial_cli_init(void)
     esp_console_cmd_register(&tg_token_cmd);
 
     /* set_api_key */
-    api_key_args.key = arg_str1(NULL, NULL, "<key>", "Anthropic API key");
+    api_key_args.key = arg_str1(NULL, NULL, "<key>", "LLM API key");
     api_key_args.end = arg_end(1);
     esp_console_cmd_t api_key_cmd = {
         .command = "set_api_key",
-        .help = "Set Claude API key",
+        .help = "Set LLM API key",
         .func = &cmd_set_api_key,
         .argtable = &api_key_args,
     };
@@ -364,6 +400,17 @@ esp_err_t serial_cli_init(void)
         .argtable = &model_args,
     };
     esp_console_cmd_register(&model_cmd);
+
+    /* set_model_provider */
+    provider_args.provider = arg_str1(NULL, NULL, "<provider>", "Model provider (anthropic|openai)");
+    provider_args.end = arg_end(1);
+    esp_console_cmd_t provider_cmd = {
+        .command = "set_model_provider",
+        .help = "Set LLM model provider (default: " MIMI_LLM_PROVIDER_DEFAULT ")",
+        .func = &cmd_set_model_provider,
+        .argtable = &provider_args,
+    };
+    esp_console_cmd_register(&provider_cmd);
 
     /* memory_read */
     esp_console_cmd_t mem_read_cmd = {
