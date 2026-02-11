@@ -23,6 +23,7 @@ void display_show_config_screen(const char *qr_text, const char *ip_text,
                                 size_t selected, int selected_offset_px);
 void display_show_agent_status(const char *icon, const char *status, const char *detail, bool loading);
 void display_clear_agent_status(void);
+bool display_is_agent_ui_active(void);
 
 #ifdef __cplusplus
 }

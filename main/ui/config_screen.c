@@ -90,6 +90,10 @@ static void build_config_lines(void)
 
 static void render_config_screen(void)
 {
+    if (display_is_agent_ui_active()) {
+        return;
+    }
+
     const char *ip = wifi_manager_get_ip();
     if (!ip || ip[0] == '\0') {
         ip = "0.0.0.0";
@@ -97,8 +101,8 @@ static void render_config_screen(void)
 
     char qr_text[64] = {0};
     char ip_text[64] = {0};
-    snprintf(qr_text, sizeof(qr_text), "%s:8888", ip);
-    snprintf(ip_text, sizeof(ip_text), "%s:8888", ip);
+    snprintf(qr_text, sizeof(qr_text), "ws://%s:%d/ws", ip, MIMI_WS_PORT);
+    snprintf(ip_text, sizeof(ip_text), "%s:%d", ip, MIMI_WS_PORT);
 
     display_show_config_screen(qr_text, ip_text, s_line_ptrs, s_line_count, s_scroll, s_selected, s_sel_offset_px);
 }
@@ -144,11 +148,16 @@ void config_screen_init(void)
         .arg = NULL,
     };
     ESP_ERROR_CHECK(esp_timer_create(&timer_args, &s_scroll_timer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(s_scroll_timer, 150000));
+    /* Keep config screen refresh moderate to avoid overwhelming LCD SPI queue. */
+    ESP_ERROR_CHECK(esp_timer_start_periodic(s_scroll_timer, 1500000));
 }
 
 void config_screen_toggle(void)
 {
+    if (display_is_agent_ui_active()) {
+        return;
+    }
+
     if (s_active) {
         s_active = false;
         display_show_banner();

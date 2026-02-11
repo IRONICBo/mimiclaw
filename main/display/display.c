@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "esp_lcd_panel_io.h"
@@ -67,6 +68,17 @@ typedef struct {
 
 static qr_draw_ctx_t s_qr_ctx;
 
+#define QR_CACHE_MAX_SIZE 64
+
+typedef struct {
+    bool valid;
+    int size;
+    char text[96];
+    uint8_t modules[QR_CACHE_MAX_SIZE * QR_CACHE_MAX_SIZE];
+} qr_cache_t;
+
+static qr_cache_t s_qr_cache = {0};
+
 typedef struct {
     bool active;
     bool loading;
@@ -77,6 +89,34 @@ typedef struct {
 } agent_ui_state_t;
 
 static agent_ui_state_t s_agent_ui = {0};
+static agent_ui_state_t s_pending_ui = {0};
+static bool s_pending_ui_valid = false;
+static int64_t s_agent_last_update_us = 0;
+static int64_t s_agent_last_switch_us = 0;
+static int64_t s_agent_restore_deadline_us = 0;
+
+#define AGENT_FRAME_MS 500
+#define AGENT_MIN_SWITCH_US (1200 * 1000)
+#define AGENT_IDLE_RESTORE_US (3000 * 1000)
+#define AGENT_MIN_DRAW_INTERVAL_US (1500 * 1000)
+static int64_t s_lcd_retry_after_us = 0;
+static int64_t s_agent_last_draw_us = 0;
+
+static esp_err_t lcd_draw_fullscreen(const void *buf)
+{
+    int64_t now = esp_timer_get_time();
+    if (now < s_lcd_retry_after_us) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t err = esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, BANNER_W, BANNER_H, buf);
+    if (err != ESP_OK) {
+        s_lcd_retry_after_us = now + 3000 * 1000;
+    } else {
+        s_agent_last_draw_us = now;
+    }
+    return err;
+}
 
 extern const uint8_t _binary_banner_320x172_rgb565_start[];
 extern const uint8_t _binary_banner_320x172_rgb565_end[];
@@ -185,13 +225,22 @@ static void draw_agent_status_locked(void)
     const uint16_t white = rgb565(255, 255, 255);
     const uint16_t gray = rgb565(180, 180, 180);
 
+    static const char *lobster_frames[] = {
+        "<\\_/^>",
+        "<^\\_/>",
+        "<\\_/^>",
+        "<^\\_/>",
+    };
+    const char *lob = lobster_frames[s_agent_ui.phase % 4];
+
     fb_fill_rect(0, 0, BANNER_W, BANNER_H, black);
 
-    fb_draw_text_clipped(10, 10, s_agent_ui.icon[0] ? s_agent_ui.icon : "[AGENT]", white, 14, 2, 0, BANNER_W);
-    fb_draw_text_clipped(10, 38, s_agent_ui.status[0] ? s_agent_ui.status : "Working", white, 14, 2, 0, BANNER_W);
+    fb_draw_text_clipped(8, 10, lob, white, 14, 2, 0, BANNER_W);
+    fb_draw_text_clipped(82, 8, s_agent_ui.icon[0] ? s_agent_ui.icon : "[AGENT]", white, 24, 3, 0, BANNER_W);
+    fb_draw_text_clipped(8, 44, s_agent_ui.status[0] ? s_agent_ui.status : "Working", white, 24, 3, 0, BANNER_W);
 
     if (s_agent_ui.detail[0]) {
-        fb_draw_text_clipped(10, 66, s_agent_ui.detail, gray, 10, 1, 0, BANNER_W - 8);
+        fb_draw_text_clipped(10, 88, s_agent_ui.detail, gray, 16, 2, 0, BANNER_W - 8);
     }
 
     if (s_agent_ui.loading) {
@@ -199,18 +248,56 @@ static void draw_agent_status_locked(void)
         fb_draw_text_clipped(10, 146, dots, white, 12, 2, 0, BANNER_W);
     }
 
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, BANNER_W, BANNER_H, framebuffer));
+    (void)lcd_draw_fullscreen(framebuffer);
+}
+
+static void draw_banner_locked(void)
+{
+    if (!panel_handle) {
+        return;
+    }
+    const uint8_t *start = _binary_banner_320x172_rgb565_start;
+    const uint8_t *end = _binary_banner_320x172_rgb565_end;
+    size_t len = (size_t)(end - start);
+    size_t expected = (size_t)BANNER_W * (size_t)BANNER_H * 2;
+    if (len < expected) {
+        return;
+    }
+    (void)lcd_draw_fullscreen(start);
 }
 
 static void agent_ui_task(void *arg)
 {
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(350));
+        vTaskDelay(pdMS_TO_TICKS(AGENT_FRAME_MS));
         if (!s_ui_lock) continue;
         if (xSemaphoreTake(s_ui_lock, pdMS_TO_TICKS(20)) != pdTRUE) continue;
-        if (s_agent_ui.active && s_agent_ui.loading) {
-            s_agent_ui.phase++;
-            draw_agent_status_locked();
+        int64_t now = esp_timer_get_time();
+
+        if (s_agent_ui.active) {
+            if (s_pending_ui_valid && (now - s_agent_last_switch_us >= AGENT_MIN_SWITCH_US)) {
+                s_agent_ui = s_pending_ui;
+                s_pending_ui_valid = false;
+                s_agent_last_switch_us = now;
+                draw_agent_status_locked();
+            }
+
+            if (s_agent_ui.loading) {
+                /* Keep the status screen alive while thinking/working. */
+                s_agent_restore_deadline_us = now + AGENT_IDLE_RESTORE_US;
+                if (now - s_agent_last_draw_us >= AGENT_MIN_DRAW_INTERVAL_US) {
+                    s_agent_ui.phase++;
+                    draw_agent_status_locked();
+                }
+            }
+
+            if (s_agent_restore_deadline_us > 0 && now >= s_agent_restore_deadline_us) {
+                memset(&s_agent_ui, 0, sizeof(s_agent_ui));
+                memset(&s_pending_ui, 0, sizeof(s_pending_ui));
+                s_pending_ui_valid = false;
+                s_agent_restore_deadline_us = 0;
+                draw_banner_locked();
+            }
         }
         xSemaphoreGive(s_ui_lock);
     }
@@ -323,26 +410,74 @@ esp_err_t display_init(void)
 
 void display_show_banner(void)
 {
-    if (!panel_handle) {
-        ESP_LOGW(TAG, "display not initialized");
+    if (!s_ui_lock || !panel_handle) {
         return;
     }
-
-    const uint8_t *start = _binary_banner_320x172_rgb565_start;
-    const uint8_t *end = _binary_banner_320x172_rgb565_end;
-    size_t len = (size_t)(end - start);
-    size_t expected = (size_t)BANNER_W * (size_t)BANNER_H * 2;
-    if (len < expected) {
-        ESP_LOGW(TAG, "banner data too small (%u < %u)", (unsigned)len, (unsigned)expected);
-        return;
+    if (xSemaphoreTake(s_ui_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
+        memset(&s_agent_ui, 0, sizeof(s_agent_ui));
+        memset(&s_pending_ui, 0, sizeof(s_pending_ui));
+        s_pending_ui_valid = false;
+        s_agent_restore_deadline_us = 0;
+        draw_banner_locked();
+        xSemaphoreGive(s_ui_lock);
     }
-
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, BANNER_W, BANNER_H, start));
 }
 
-static void qr_draw_cb(esp_qrcode_handle_t qrcode)
+static void qr_cache_cb(esp_qrcode_handle_t qrcode)
 {
     int size = esp_qrcode_get_size(qrcode);
+    if (size <= 0 || size > QR_CACHE_MAX_SIZE) {
+        s_qr_cache.valid = false;
+        s_qr_cache.size = 0;
+        return;
+    }
+
+    memset(s_qr_cache.modules, 0, sizeof(s_qr_cache.modules));
+    for (int y = 0; y < size; y++) {
+        for (int x = 0; x < size; x++) {
+            if (esp_qrcode_get_module(qrcode, x, y)) {
+                s_qr_cache.modules[y * QR_CACHE_MAX_SIZE + x] = 1;
+            }
+        }
+    }
+    s_qr_cache.size = size;
+    s_qr_cache.valid = true;
+}
+
+static bool qr_cache_ensure(const char *qr_text)
+{
+    if (!qr_text || qr_text[0] == '\0') {
+        return false;
+    }
+
+    if (s_qr_cache.valid && strncmp(s_qr_cache.text, qr_text, sizeof(s_qr_cache.text)) == 0) {
+        return true;
+    }
+
+    s_qr_cache.valid = false;
+    s_qr_cache.size = 0;
+
+    esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
+    cfg.display_func = qr_cache_cb;
+    cfg.max_qrcode_version = 6;
+    cfg.qrcode_ecc_level = ESP_QRCODE_ECC_MED;
+
+    esp_qrcode_generate(&cfg, qr_text);
+    if (!s_qr_cache.valid) {
+        return false;
+    }
+
+    snprintf(s_qr_cache.text, sizeof(s_qr_cache.text), "%s", qr_text);
+    return true;
+}
+
+static void qr_draw_cached(void)
+{
+    if (!s_qr_cache.valid || s_qr_cache.size <= 0) {
+        return;
+    }
+
+    int size = s_qr_cache.size;
     int quiet = 2;
     int scale = s_qr_ctx.box / (size + quiet * 2);
     if (scale < 1) {
@@ -354,7 +489,7 @@ static void qr_draw_cb(esp_qrcode_handle_t qrcode)
 
     for (int y = 0; y < size; y++) {
         for (int x = 0; x < size; x++) {
-            if (esp_qrcode_get_module(qrcode, x, y)) {
+            if (s_qr_cache.modules[y * QR_CACHE_MAX_SIZE + x]) {
                 fb_fill_rect(origin_x + x * scale, origin_y + y * scale, scale, scale, s_qr_ctx.fg);
             }
         }
@@ -372,10 +507,21 @@ void display_show_config_screen(const char *qr_text, const char *ip_text,
     if (!qr_text || !ip_text || !lines) {
         return;
     }
+    if (!s_ui_lock) {
+        return;
+    }
+    if (xSemaphoreTake(s_ui_lock, pdMS_TO_TICKS(20)) != pdTRUE) {
+        return;
+    }
+    if (s_agent_ui.active) {
+        xSemaphoreGive(s_ui_lock);
+        return;
+    }
 
     fb_ensure();
     if (!framebuffer) {
         ESP_LOGW(TAG, "framebuffer alloc failed");
+        xSemaphoreGive(s_ui_lock);
         return;
     }
 
@@ -400,13 +546,9 @@ void display_show_config_screen(const char *qr_text, const char *ip_text,
     s_qr_ctx.y = qr_y;
     s_qr_ctx.box = qr_box;
     s_qr_ctx.fg = color_qr_fg;
-
-    esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
-    cfg.display_func = qr_draw_cb;
-    cfg.max_qrcode_version = 6;
-    cfg.qrcode_ecc_level = ESP_QRCODE_ECC_MED;
-
-    esp_qrcode_generate(&cfg, qr_text);
+    if (qr_cache_ensure(qr_text)) {
+        qr_draw_cached();
+    }
 
     // IP text under QR
     fb_draw_text_clipped(qr_x, qr_y + qr_box + 4, ip_text, color_fg, 10, 1, 0, BANNER_W);
@@ -437,7 +579,16 @@ void display_show_config_screen(const char *qr_text, const char *ip_text,
         }
     }
 
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, BANNER_W, BANNER_H, framebuffer));
+    esp_err_t err = lcd_draw_fullscreen(framebuffer);
+    if (err != ESP_OK) {
+        static int64_t s_last_log_us = 0;
+        int64_t now = esp_timer_get_time();
+        if (now - s_last_log_us > 1000000) {
+            s_last_log_us = now;
+            ESP_LOGW(TAG, "config draw failed: %s", esp_err_to_name(err));
+        }
+    }
+    xSemaphoreGive(s_ui_lock);
 }
 
 bool display_get_banner_center_rgb(uint8_t *r, uint8_t *g, uint8_t *b)
@@ -478,15 +629,34 @@ void display_show_agent_status(const char *icon, const char *status, const char 
         return;
     }
 
-    s_agent_ui.active = true;
-    s_agent_ui.loading = loading;
-    if (!loading) {
-        s_agent_ui.phase = 0;
+    int64_t now = esp_timer_get_time();
+    agent_ui_state_t next = {0};
+    next.active = true;
+    next.loading = loading;
+    next.phase = s_agent_ui.phase;
+    snprintf(next.icon, sizeof(next.icon), "%s", icon ? icon : "[AGENT]");
+    snprintf(next.status, sizeof(next.status), "%s", status ? status : "Working");
+    snprintf(next.detail, sizeof(next.detail), "%s", detail ? detail : "");
+
+    bool changed = (strcmp(s_agent_ui.icon, next.icon) != 0) || (strcmp(s_agent_ui.status, next.status) != 0);
+    bool detail_changed = (strcmp(s_agent_ui.detail, next.detail) != 0);
+    bool need_draw = changed || detail_changed || (s_agent_ui.loading != next.loading);
+    bool hold = s_agent_ui.active && changed && (now - s_agent_last_switch_us < AGENT_MIN_SWITCH_US);
+
+    if (hold) {
+        s_pending_ui = next;
+        s_pending_ui_valid = true;
+    } else {
+        s_agent_ui = next;
+        s_pending_ui_valid = false;
+        s_agent_last_switch_us = now;
+        if (need_draw || (now - s_agent_last_draw_us >= AGENT_MIN_DRAW_INTERVAL_US)) {
+            draw_agent_status_locked();
+        }
     }
-    snprintf(s_agent_ui.icon, sizeof(s_agent_ui.icon), "%s", icon ? icon : "[AGENT]");
-    snprintf(s_agent_ui.status, sizeof(s_agent_ui.status), "%s", status ? status : "Working");
-    snprintf(s_agent_ui.detail, sizeof(s_agent_ui.detail), "%s", detail ? detail : "");
-    draw_agent_status_locked();
+
+    s_agent_last_update_us = now;
+    s_agent_restore_deadline_us = now + AGENT_IDLE_RESTORE_US;
 
     xSemaphoreGive(s_ui_lock);
 }
@@ -494,12 +664,29 @@ void display_show_agent_status(const char *icon, const char *status, const char 
 void display_clear_agent_status(void)
 {
     if (!s_ui_lock) {
-        display_show_banner();
         return;
     }
     if (xSemaphoreTake(s_ui_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
-        memset(&s_agent_ui, 0, sizeof(s_agent_ui));
+        if (s_agent_ui.active) {
+            s_agent_ui.loading = false;
+            s_agent_restore_deadline_us = esp_timer_get_time() + AGENT_IDLE_RESTORE_US;
+        }
         xSemaphoreGive(s_ui_lock);
     }
-    display_show_banner();
+}
+
+bool display_is_agent_ui_active(void)
+{
+    if (!s_ui_lock) {
+        return false;
+    }
+
+    bool active = false;
+    if (xSemaphoreTake(s_ui_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
+        int64_t now = esp_timer_get_time();
+        active = s_agent_ui.active || s_pending_ui_valid ||
+                 (s_agent_restore_deadline_us > 0 && now < s_agent_restore_deadline_us);
+        xSemaphoreGive(s_ui_lock);
+    }
+    return active;
 }

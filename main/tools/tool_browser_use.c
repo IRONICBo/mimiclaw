@@ -11,6 +11,7 @@
 #include "cJSON.h"
 
 static const char *TAG = "tool_browser";
+static const size_t BROWSER_RPC_BUF_SIZE = 4096;
 
 static const char *extract_cmd(const cJSON *root)
 {
@@ -118,21 +119,29 @@ esp_err_t tool_browser_use_execute(const char *input_json, char *output, size_t 
 
         display_show_agent_status("[BRW]", "Browser Tool", command, true);
         bool ok = false;
-        char rpc_payload[3072] = {0};
-        esp_err_t err = ws_server_browser_rpc("get_dom_snapshot", extra_json, rpc_payload, sizeof(rpc_payload), &ok, 30000);
+        char *rpc_payload = calloc(1, BROWSER_RPC_BUF_SIZE);
+        if (!rpc_payload) {
+            free(extra_json);
+            snprintf(output, output_size, "Error: out of memory");
+            return ESP_ERR_NO_MEM;
+        }
+        esp_err_t err = ws_server_browser_rpc("get_dom_snapshot", extra_json, rpc_payload, BROWSER_RPC_BUF_SIZE, &ok, 30000);
         free(extra_json);
         if (err != ESP_OK) {
             snprintf(output, output_size, "Error: browser rpc failed (%s)", esp_err_to_name(err));
             ESP_LOGW(TAG, "%s", output);
             display_show_agent_status("[BRW]", "Browser Tool", "RPC failed", false);
+            free(rpc_payload);
             return err;
         }
         if (!ok) {
             snprintf(output, output_size, "Error: %s", rpc_payload[0] ? rpc_payload : "browser_command_failed");
             display_show_agent_status("[BRW]", "Browser Tool", "Command failed", false);
+            free(rpc_payload);
             return ESP_FAIL;
         }
         snprintf(output, output_size, "%s", rpc_payload[0] ? rpc_payload : "{}");
+        free(rpc_payload);
         display_show_agent_status("[BRW]", "Browser Tool", "OK", false);
         return ESP_OK;
     } else if (strcmp(command, "execute_action") == 0) {
@@ -157,9 +166,17 @@ esp_err_t tool_browser_use_execute(const char *input_json, char *output, size_t 
 
         /* Read current page first for Twitter-specific recovery/verification. */
         bool dom_ok = false;
-        char dom_payload[3072] = {0};
+        char *dom_payload = calloc(1, BROWSER_RPC_BUF_SIZE);
+        char *rpc_payload = calloc(1, BROWSER_RPC_BUF_SIZE);
+        if (!dom_payload || !rpc_payload) {
+            cJSON_Delete(action_dup);
+            free(dom_payload);
+            free(rpc_payload);
+            snprintf(output, output_size, "Error: out of memory");
+            return ESP_ERR_NO_MEM;
+        }
         bool in_twitter = false;
-        if (rpc_get_dom(dom_payload, sizeof(dom_payload), &dom_ok) == ESP_OK && dom_ok) {
+        if (rpc_get_dom(dom_payload, BROWSER_RPC_BUF_SIZE, &dom_ok) == ESP_OK && dom_ok) {
             in_twitter = parse_dom_is_twitter(dom_payload);
         }
 
@@ -176,8 +193,7 @@ esp_err_t tool_browser_use_execute(const char *input_json, char *output, size_t 
         }
 
         bool ok = false;
-        char rpc_payload[3072] = {0};
-        esp_err_t err = rpc_execute_action(action_dup, rpc_payload, sizeof(rpc_payload), &ok);
+        esp_err_t err = rpc_execute_action(action_dup, rpc_payload, BROWSER_RPC_BUF_SIZE, &ok);
 
         /* Recovery 1: open composer directly if click target not found on Twitter. */
         if ((err == ESP_OK) && !ok && strcmp(action_name, "click") == 0 && in_twitter &&
@@ -185,7 +201,7 @@ esp_err_t tool_browser_use_execute(const char *input_json, char *output, size_t 
             cJSON *nav = cJSON_CreateObject();
             cJSON_AddStringToObject(nav, "name", "navigate");
             cJSON_AddStringToObject(nav, "url", "https://x.com/compose/post");
-            err = rpc_execute_action(nav, rpc_payload, sizeof(rpc_payload), &ok);
+            err = rpc_execute_action(nav, rpc_payload, BROWSER_RPC_BUF_SIZE, &ok);
             cJSON_Delete(nav);
         }
 
@@ -194,17 +210,17 @@ esp_err_t tool_browser_use_execute(const char *input_json, char *output, size_t 
             bool ready = false;
             for (int i = 0; i < 5; i++) {
                 bool check_ok = false;
-                char check_payload[3072] = {0};
-                if (rpc_get_dom(check_payload, sizeof(check_payload), &check_ok) == ESP_OK && check_ok) {
-                    ready = parse_twitter_fill_ready(check_payload);
+                dom_payload[0] = '\0';
+                if (rpc_get_dom(dom_payload, BROWSER_RPC_BUF_SIZE, &check_ok) == ESP_OK && check_ok) {
+                    ready = parse_twitter_fill_ready(dom_payload);
                 }
                 if (ready) break;
-                err = rpc_execute_action(action_dup, rpc_payload, sizeof(rpc_payload), &ok);
+                err = rpc_execute_action(action_dup, rpc_payload, BROWSER_RPC_BUF_SIZE, &ok);
                 if (err != ESP_OK || !ok) break;
             }
             if (!ready && err == ESP_OK && ok) {
                 ok = false;
-                snprintf(rpc_payload, sizeof(rpc_payload), "Twitter fill not applied to editor state (post button still disabled).");
+                snprintf(rpc_payload, BROWSER_RPC_BUF_SIZE, "Twitter fill not applied to editor state (post button still disabled).");
             }
         }
 
@@ -214,14 +230,20 @@ esp_err_t tool_browser_use_execute(const char *input_json, char *output, size_t 
             snprintf(output, output_size, "Error: browser rpc failed (%s)", esp_err_to_name(err));
             ESP_LOGW(TAG, "%s", output);
             display_show_agent_status("[BRW]", "Browser Tool", "RPC failed", false);
+            free(dom_payload);
+            free(rpc_payload);
             return err;
         }
         if (!ok) {
             snprintf(output, output_size, "Error: %s", rpc_payload[0] ? rpc_payload : "browser_command_failed");
             display_show_agent_status("[BRW]", "Browser Tool", "Command failed", false);
+            free(dom_payload);
+            free(rpc_payload);
             return ESP_FAIL;
         }
         snprintf(output, output_size, "%s", rpc_payload[0] ? rpc_payload : "{}");
+        free(dom_payload);
+        free(rpc_payload);
         display_show_agent_status("[BRW]", "Browser Tool", "OK", false);
         return ESP_OK;
     } else {
