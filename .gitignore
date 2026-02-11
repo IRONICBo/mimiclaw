@@ -27,6 +27,7 @@ mmap_generate_*.h
 
 # Environment
 .env
+.venv/
 main/mimi_secrets.h
 
 # Cache / Compiled

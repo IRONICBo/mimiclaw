@@ -31,6 +31,12 @@
 #ifndef MIMI_SECRET_SEARCH_KEY
 #define MIMI_SECRET_SEARCH_KEY      ""
 #endif
+#ifndef MIMI_SECRET_QWEN_API_KEY
+#define MIMI_SECRET_QWEN_API_KEY    ""
+#endif
+#ifndef MIMI_SECRET_QWEN_MODEL
+#define MIMI_SECRET_QWEN_MODEL      ""
+#endif
 
 /* WiFi */
 #define MIMI_WIFI_MAX_RETRY          10
@@ -55,12 +61,23 @@
 /* Timezone (POSIX TZ format) */
 #define MIMI_TIMEZONE                "PST8PDT,M3.2.0,M11.1.0"
 
-/* LLM */
+/* LLM - Claude (Anthropic) */
 #define MIMI_LLM_DEFAULT_MODEL       "claude-opus-4-5"
 #define MIMI_LLM_MAX_TOKENS          4096
 #define MIMI_LLM_API_URL             "https://api.anthropic.com/v1/messages"
 #define MIMI_LLM_API_VERSION         "2023-06-01"
 #define MIMI_LLM_STREAM_BUF_SIZE     (32 * 1024)
+
+/* LLM - Qwen (Alibaba) */
+#define MIMI_QWEN_DEFAULT_MODEL      "qwen-plus"
+#define MIMI_QWEN_MAX_TOKENS         4096
+#define MIMI_QWEN_API_URL            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+#define MIMI_QWEN_STREAM_BUF_SIZE    (32 * 1024)
+
+/* LLM Provider Selection (0=Claude, 1=Qwen) */
+#ifndef MIMI_LLM_PROVIDER
+#define MIMI_LLM_PROVIDER            0
+#endif
 
 /* Message Bus */
 #define MIMI_BUS_QUEUE_LEN           8
@@ -92,6 +109,7 @@
 #define MIMI_NVS_WIFI                "wifi_config"
 #define MIMI_NVS_TG                  "tg_config"
 #define MIMI_NVS_LLM                 "llm_config"
+#define MIMI_NVS_QWEN                "qwen_config"
 #define MIMI_NVS_PROXY               "proxy_config"
 #define MIMI_NVS_SEARCH              "search_config"
 
@@ -101,6 +119,8 @@
 #define MIMI_NVS_KEY_TG_TOKEN        "bot_token"
 #define MIMI_NVS_KEY_API_KEY         "api_key"
 #define MIMI_NVS_KEY_MODEL           "model"
+#define MIMI_NVS_KEY_QWEN_API_KEY    "qwen_api_key"
+#define MIMI_NVS_KEY_QWEN_MODEL      "qwen_model"
 #define MIMI_NVS_KEY_PROXY_HOST      "host"
 #define MIMI_NVS_KEY_PROXY_PORT      "port"
 
