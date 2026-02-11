@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include "esp_check.h"
 #include "esp_log.h"
 #include "driver/ledc.h"
@@ -12,6 +13,9 @@
 #include "display/Vernon_ST7789T/Vernon_ST7789T.h"
 #include "display/font5x7.h"
 #include "qrcode.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 
 #define LCD_HOST  SPI3_HOST
 
@@ -51,6 +55,8 @@ static const char *TAG = "display";
 static esp_lcd_panel_handle_t panel_handle = NULL;
 static uint8_t backlight_percent = 50;
 static uint16_t *framebuffer = NULL;
+static SemaphoreHandle_t s_ui_lock = NULL;
+static TaskHandle_t s_ui_task = NULL;
 
 typedef struct {
     int x;
@@ -60,6 +66,17 @@ typedef struct {
 } qr_draw_ctx_t;
 
 static qr_draw_ctx_t s_qr_ctx;
+
+typedef struct {
+    bool active;
+    bool loading;
+    int phase;
+    char icon[24];
+    char status[64];
+    char detail[160];
+} agent_ui_state_t;
+
+static agent_ui_state_t s_agent_ui = {0};
 
 extern const uint8_t _binary_banner_320x172_rgb565_start[];
 extern const uint8_t _binary_banner_320x172_rgb565_end[];
@@ -150,6 +167,52 @@ static void fb_draw_text_clipped(int x, int y, const char *text, uint16_t color,
         }
         fb_draw_char_scaled_clipped(cx, cy, text[i], color, scale, clip_x0, clip_x1);
         cx += (FONT5X7_WIDTH + 1) * scale;
+    }
+}
+
+static void draw_agent_status_locked(void)
+{
+    if (!panel_handle || !s_agent_ui.active) {
+        return;
+    }
+
+    fb_ensure();
+    if (!framebuffer) {
+        return;
+    }
+
+    const uint16_t black = rgb565(0, 0, 0);
+    const uint16_t white = rgb565(255, 255, 255);
+    const uint16_t gray = rgb565(180, 180, 180);
+
+    fb_fill_rect(0, 0, BANNER_W, BANNER_H, black);
+
+    fb_draw_text_clipped(10, 10, s_agent_ui.icon[0] ? s_agent_ui.icon : "[AGENT]", white, 14, 2, 0, BANNER_W);
+    fb_draw_text_clipped(10, 38, s_agent_ui.status[0] ? s_agent_ui.status : "Working", white, 14, 2, 0, BANNER_W);
+
+    if (s_agent_ui.detail[0]) {
+        fb_draw_text_clipped(10, 66, s_agent_ui.detail, gray, 10, 1, 0, BANNER_W - 8);
+    }
+
+    if (s_agent_ui.loading) {
+        const char *dots = (s_agent_ui.phase % 3 == 0) ? "." : (s_agent_ui.phase % 3 == 1) ? ".." : "...";
+        fb_draw_text_clipped(10, 146, dots, white, 12, 2, 0, BANNER_W);
+    }
+
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, BANNER_W, BANNER_H, framebuffer));
+}
+
+static void agent_ui_task(void *arg)
+{
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(350));
+        if (!s_ui_lock) continue;
+        if (xSemaphoreTake(s_ui_lock, pdMS_TO_TICKS(20)) != pdTRUE) continue;
+        if (s_agent_ui.active && s_agent_ui.loading) {
+            s_agent_ui.phase++;
+            draw_agent_status_locked();
+        }
+        xSemaphoreGive(s_ui_lock);
     }
 }
 
@@ -248,6 +311,12 @@ esp_err_t display_init(void)
 
     backlight_ledc_init();
     display_set_backlight_percent(backlight_percent);
+    if (!s_ui_lock) {
+        s_ui_lock = xSemaphoreCreateMutex();
+    }
+    if (!s_ui_task) {
+        xTaskCreatePinnedToCore(agent_ui_task, "disp_ui", 4096, NULL, 2, &s_ui_task, 0);
+    }
 
     return ret;
 }
@@ -398,4 +467,39 @@ bool display_get_banner_center_rgb(uint8_t *r, uint8_t *g, uint8_t *b)
     *g = (uint8_t)((g6 * 255) / 63);
     *b = (uint8_t)((b5 * 255) / 31);
     return true;
+}
+
+void display_show_agent_status(const char *icon, const char *status, const char *detail, bool loading)
+{
+    if (!s_ui_lock) {
+        return;
+    }
+    if (xSemaphoreTake(s_ui_lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return;
+    }
+
+    s_agent_ui.active = true;
+    s_agent_ui.loading = loading;
+    if (!loading) {
+        s_agent_ui.phase = 0;
+    }
+    snprintf(s_agent_ui.icon, sizeof(s_agent_ui.icon), "%s", icon ? icon : "[AGENT]");
+    snprintf(s_agent_ui.status, sizeof(s_agent_ui.status), "%s", status ? status : "Working");
+    snprintf(s_agent_ui.detail, sizeof(s_agent_ui.detail), "%s", detail ? detail : "");
+    draw_agent_status_locked();
+
+    xSemaphoreGive(s_ui_lock);
+}
+
+void display_clear_agent_status(void)
+{
+    if (!s_ui_lock) {
+        display_show_banner();
+        return;
+    }
+    if (xSemaphoreTake(s_ui_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
+        memset(&s_agent_ui, 0, sizeof(s_agent_ui));
+        xSemaphoreGive(s_ui_lock);
+    }
+    display_show_banner();
 }

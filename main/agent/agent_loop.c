@@ -5,6 +5,7 @@
 #include "llm/llm_proxy.h"
 #include "memory/session_mgr.h"
 #include "tools/tool_registry.h"
+#include "display/display.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -62,7 +63,9 @@ static cJSON *build_tool_results(const llm_response_t *resp, char *tool_output, 
 
         /* Execute tool */
         tool_output[0] = '\0';
+        display_show_agent_status("[TOOL]", call->name, call->input, true);
         tool_registry_execute(call->name, call->input, tool_output, tool_output_size);
+        display_show_agent_status("[TOOL]", call->name, "done", false);
 
         ESP_LOGI(TAG, "Tool %s result: %d bytes", call->name, (int)strlen(tool_output));
 
@@ -100,6 +103,7 @@ static void agent_loop_task(void *arg)
         if (err != ESP_OK) continue;
 
         ESP_LOGI(TAG, "Processing message from %s:%s", msg.channel, msg.chat_id);
+        display_show_agent_status("[AGENT]", "New Request", msg.content, true);
 
         /* 1. Build system prompt */
         context_build_system_prompt(system_prompt, MIMI_CONTEXT_BUF_SIZE);
@@ -140,7 +144,11 @@ static void agent_loop_task(void *arg)
             }
 
             llm_response_t resp;
+            display_show_agent_status("[LLM]", "Thinking", "calling model", true);
             err = llm_chat_tools(system_prompt, messages, tools_json, &resp);
+            if (err == ESP_OK) {
+                display_show_agent_status("[LLM]", "Response Received", "", false);
+            }
 
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "LLM call failed: %s", esp_err_to_name(err));
@@ -200,6 +208,7 @@ static void agent_loop_task(void *arg)
                 message_bus_push_outbound(&out);
             }
         }
+        display_clear_agent_status();
 
         /* Free inbound message content */
         free(msg.content);

@@ -4,8 +4,13 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include "esp_log.h"
 #include "esp_http_server.h"
+#include "esp_timer.h"
+#include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "cJSON.h"
 
 static const char *TAG = "ws";
@@ -20,6 +25,15 @@ typedef struct {
 } ws_client_t;
 
 static ws_client_t s_clients[MIMI_WS_MAX_CLIENTS];
+static int s_extension_fd = -1;
+
+typedef struct {
+    char request_id[64];
+    bool ok;
+    char payload[3072];
+} ws_cmd_result_t;
+
+static QueueHandle_t s_browser_result_q = NULL;
 
 static ws_client_t *find_client_by_fd(int fd)
 {
@@ -62,9 +76,57 @@ static void remove_client(int fd)
         if (s_clients[i].active && s_clients[i].fd == fd) {
             ESP_LOGI(TAG, "Client disconnected: %s", s_clients[i].chat_id);
             s_clients[i].active = false;
+            if (s_extension_fd == fd) {
+                s_extension_fd = -1;
+            }
             return;
         }
     }
+}
+
+static esp_err_t ws_send_json_fd(int fd, const char *json_str)
+{
+    if (!s_server || fd < 0 || !json_str) return ESP_ERR_INVALID_ARG;
+    httpd_ws_frame_t ws_pkt = {
+        .type = HTTPD_WS_TYPE_TEXT,
+        .payload = (uint8_t *)json_str,
+        .len = strlen(json_str),
+    };
+    return httpd_ws_send_frame_async(s_server, fd, &ws_pkt);
+}
+
+static void queue_browser_result(cJSON *root)
+{
+    if (!s_browser_result_q || !root) return;
+    cJSON *rid = cJSON_GetObjectItem(root, "request_id");
+    cJSON *ok = cJSON_GetObjectItem(root, "ok");
+    if (!rid || !cJSON_IsString(rid) || !ok || !cJSON_IsBool(ok)) return;
+
+    ws_cmd_result_t item = {0};
+    snprintf(item.request_id, sizeof(item.request_id), "%s", rid->valuestring);
+    item.ok = cJSON_IsTrue(ok);
+
+    if (item.ok) {
+        cJSON *result = cJSON_GetObjectItem(root, "result");
+        if (result) {
+            char *txt = cJSON_PrintUnformatted(result);
+            if (txt) {
+                snprintf(item.payload, sizeof(item.payload), "%s", txt);
+                free(txt);
+            }
+        } else {
+            snprintf(item.payload, sizeof(item.payload), "{}");
+        }
+    } else {
+        cJSON *err = cJSON_GetObjectItem(root, "error");
+        if (err && cJSON_IsString(err)) {
+            snprintf(item.payload, sizeof(item.payload), "%s", err->valuestring);
+        } else {
+            snprintf(item.payload, sizeof(item.payload), "unknown_error");
+        }
+    }
+
+    xQueueSend(s_browser_result_q, &item, 0);
 }
 
 static esp_err_t ws_handler(httpd_req_t *req)
@@ -110,6 +172,53 @@ static esp_err_t ws_handler(httpd_req_t *req)
     cJSON *type = cJSON_GetObjectItem(root, "type");
     cJSON *content = cJSON_GetObjectItem(root, "content");
 
+    if (type && cJSON_IsString(type) && strcmp(type->valuestring, "register") == 0) {
+        cJSON *role = cJSON_GetObjectItem(root, "role");
+        if (role && cJSON_IsString(role) && strcmp(role->valuestring, "extension") == 0) {
+            s_extension_fd = fd;
+            if (client) {
+                snprintf(client->chat_id, sizeof(client->chat_id), "browser_extension");
+            }
+            cJSON *ack = cJSON_CreateObject();
+            cJSON_AddStringToObject(ack, "type", "register_ack");
+            cJSON_AddNumberToObject(ack, "ts", (double)(esp_timer_get_time() / 1000));
+            char *ack_str = cJSON_PrintUnformatted(ack);
+            cJSON_Delete(ack);
+            if (ack_str) {
+                ws_send_json_fd(fd, ack_str);
+                free(ack_str);
+            }
+            ESP_LOGI(TAG, "Extension registered (fd=%d)", fd);
+        }
+        cJSON_Delete(root);
+        return ESP_OK;
+    }
+
+    if (type && cJSON_IsString(type) && strcmp(type->valuestring, "ping") == 0) {
+        cJSON *pong = cJSON_CreateObject();
+        cJSON_AddStringToObject(pong, "type", "pong");
+        cJSON *ts = cJSON_GetObjectItem(root, "ts");
+        if (ts && cJSON_IsNumber(ts)) {
+            cJSON_AddNumberToObject(pong, "ts", ts->valuedouble);
+        } else {
+            cJSON_AddNumberToObject(pong, "ts", (double)(esp_timer_get_time() / 1000));
+        }
+        char *pong_str = cJSON_PrintUnformatted(pong);
+        cJSON_Delete(pong);
+        if (pong_str) {
+            ws_send_json_fd(fd, pong_str);
+            free(pong_str);
+        }
+        cJSON_Delete(root);
+        return ESP_OK;
+    }
+
+    if (type && cJSON_IsString(type) && strcmp(type->valuestring, "command_result") == 0) {
+        queue_browser_result(root);
+        cJSON_Delete(root);
+        return ESP_OK;
+    }
+
     if (type && cJSON_IsString(type) && strcmp(type->valuestring, "message") == 0
         && content && cJSON_IsString(content)) {
 
@@ -143,6 +252,10 @@ static esp_err_t ws_handler(httpd_req_t *req)
 esp_err_t ws_server_start(void)
 {
     memset(s_clients, 0, sizeof(s_clients));
+    s_extension_fd = -1;
+    if (!s_browser_result_q) {
+        s_browser_result_q = xQueueCreate(8, sizeof(ws_cmd_result_t));
+    }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = MIMI_WS_PORT;
@@ -214,4 +327,71 @@ esp_err_t ws_server_stop(void)
         ESP_LOGI(TAG, "WebSocket server stopped");
     }
     return ESP_OK;
+}
+
+esp_err_t ws_server_browser_rpc(const char *type, const char *extra_json,
+                                char *out_payload, size_t out_size,
+                                bool *out_ok, uint32_t timeout_ms)
+{
+    if (!type || !out_payload || out_size == 0 || !out_ok) return ESP_ERR_INVALID_ARG;
+    if (!s_server || s_extension_fd < 0) {
+        snprintf(out_payload, out_size, "browser_extension_not_connected");
+        *out_ok = false;
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    char request_id[64];
+    snprintf(request_id, sizeof(request_id), "req_%08x%08x", (unsigned)esp_random(), (unsigned)esp_random());
+
+    /* Drop stale results from previous RPC rounds. */
+    ws_cmd_result_t stale;
+    while (s_browser_result_q && xQueueReceive(s_browser_result_q, &stale, 0) == pdTRUE) {}
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "type", type);
+    cJSON_AddStringToObject(root, "request_id", request_id);
+
+    if (extra_json && extra_json[0]) {
+        cJSON *extra = cJSON_Parse(extra_json);
+        if (extra && cJSON_IsObject(extra)) {
+            cJSON *child = extra->child;
+            while (child) {
+                cJSON_AddItemToObject(root, child->string, cJSON_Duplicate(child, 1));
+                child = child->next;
+            }
+        }
+        cJSON_Delete(extra);
+    }
+
+    char *payload = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!payload) {
+        snprintf(out_payload, out_size, "build_payload_failed");
+        *out_ok = false;
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_err_t err = ws_send_json_fd(s_extension_fd, payload);
+    free(payload);
+    if (err != ESP_OK) {
+        snprintf(out_payload, out_size, "send_failed:%s", esp_err_to_name(err));
+        *out_ok = false;
+        return err;
+    }
+
+    int64_t start_ms = esp_timer_get_time() / 1000;
+    ws_cmd_result_t item;
+    while ((esp_timer_get_time() / 1000 - start_ms) < (int64_t)timeout_ms) {
+        if (xQueueReceive(s_browser_result_q, &item, pdMS_TO_TICKS(200)) == pdTRUE) {
+            if (strcmp(item.request_id, request_id) == 0) {
+                snprintf(out_payload, out_size, "%s", item.payload);
+                *out_ok = item.ok;
+                return ESP_OK;
+            }
+        }
+    }
+
+    snprintf(out_payload, out_size, "timeout_waiting_command_result");
+    *out_ok = false;
+    return ESP_ERR_TIMEOUT;
 }
