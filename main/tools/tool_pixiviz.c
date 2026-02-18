@@ -21,6 +21,22 @@
 #define LIST_BUF_SIZE (96 * 1024)
 #define LIST_LIMIT 20
 
+/* Fallback filenames to avoid hard failure when someacg API is blocked by security checkpoint. */
+static const char *SOMEACG_FALLBACK_FILES[] = {
+    "141529971_p0_scale.jpg",
+    "141273914_p0.jpg",
+    "141592709_p0.jpg",
+    "HBsKhIIbgAQjmXX_scale.jpeg",
+    "141499131_p0.png",
+    "141504186_p0.jpg",
+    "141447829_p1.jpg",
+    "HBuQ6gvbgAEfBWm.jpg",
+    "141244995_p0.jpg",
+    "HBigwuUbgAABAZs.jpg",
+    "141139984_p0.png",
+    "141297294_p0.jpg",
+};
+
 typedef struct {
     char *buf;
     size_t len;
@@ -222,6 +238,31 @@ static esp_err_t resolve_chat_id(const char *chat_id_in, char *chat_id_out, size
     return ESP_ERR_NOT_FOUND;
 }
 
+static esp_err_t send_image_prefer_photo(const char *chat_id, const char *image_url,
+                                         const char *title, const char *caption)
+{
+    if (!chat_id || !image_url || image_url[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Prefer Telegram native photo rendering by URL. */
+    esp_err_t photo_err = telegram_send_photo(chat_id, image_url, caption && caption[0] ? caption : title);
+    if (photo_err == ESP_OK) {
+        return ESP_OK;
+    }
+
+    /* Fallback to plain text link. */
+    char msg[768];
+    if (caption && caption[0]) {
+        snprintf(msg, sizeof(msg), "%s\n%s", caption, image_url);
+    } else if (title && title[0]) {
+        snprintf(msg, sizeof(msg), "%s\n%s", title, image_url);
+    } else {
+        snprintf(msg, sizeof(msg), "%s", image_url);
+    }
+    return telegram_send_message(chat_id, msg);
+}
+
 esp_err_t tool_someacg_list_execute(const char *input_json, char *output, size_t output_size)
 {
     int page = 1;
@@ -331,15 +372,15 @@ esp_err_t tool_someacg_send_image_execute(const char *input_json, char *output, 
         return cid_err;
     }
 
-    esp_err_t send_err = telegram_send_photo(chat_id, image_url, caption && caption[0] ? caption : NULL);
+    esp_err_t send_err = send_image_prefer_photo(chat_id, image_url, NULL, caption);
     cJSON_Delete(in);
 
     if (send_err != ESP_OK) {
-        snprintf(output, output_size, "Error: Telegram sendPhoto failed for %s", image_url);
+        snprintf(output, output_size, "Error: Telegram send message failed for %s", image_url);
         return send_err;
     }
 
-    snprintf(output, output_size, "OK: sent image to chat %s: %s", chat_id, image_url);
+    snprintf(output, output_size, "OK: sent image URL to chat %s: %s", chat_id, image_url);
     return ESP_OK;
 }
 
@@ -357,43 +398,33 @@ esp_err_t tool_someacg_send_random_execute(const char *input_json, char *output,
         caption = cJSON_GetStringValue(cJSON_GetObjectItem(in, "caption"));
     }
 
+    const char *file_name = "";
+    const char *title = "";
+    int pick = 0;
+    bool used_fallback = false;
+    cJSON *root = NULL;
+
     char *raw = NULL;
     esp_err_t err = someacg_fetch_list_raw(page, &raw);
-    if (err != ESP_OK) {
-        cJSON_Delete(in);
-        snprintf(output, output_size,
-                 "Error: someacg list fetch failed (possibly blocked by security checkpoint)");
-        return err;
+    if (err == ESP_OK) {
+        root = cJSON_Parse(raw);
+        free(raw);
     }
 
-    cJSON *root = cJSON_Parse(raw);
-    free(raw);
-    if (!root) {
-        cJSON_Delete(in);
-        snprintf(output, output_size, "Error: someacg list invalid JSON");
-        return ESP_FAIL;
+    cJSON *arr = root ? find_items_array(root) : NULL;
+    int total = cJSON_IsArray(arr) ? cJSON_GetArraySize(arr) : 0;
+    if (total > 0) {
+        pick = (int)(esp_random() % (uint32_t)total);
+        cJSON *item = cJSON_GetArrayItem(arr, pick);
+        file_name = item ? get_str(item, "file_name") : "";
+        title = item ? get_str(item, "title") : "";
+    } else {
+        size_t n = sizeof(SOMEACG_FALLBACK_FILES) / sizeof(SOMEACG_FALLBACK_FILES[0]);
+        pick = (int)(esp_random() % (uint32_t)n);
+        file_name = SOMEACG_FALLBACK_FILES[pick];
+        title = "Random pick";
+        used_fallback = true;
     }
-
-    cJSON *arr = find_items_array(root);
-    if (!cJSON_IsArray(arr)) {
-        cJSON_Delete(root);
-        cJSON_Delete(in);
-        snprintf(output, output_size, "Error: someacg list has no array items");
-        return ESP_FAIL;
-    }
-
-    int total = cJSON_GetArraySize(arr);
-    if (total <= 0) {
-        cJSON_Delete(root);
-        cJSON_Delete(in);
-        snprintf(output, output_size, "Error: someacg list empty");
-        return ESP_FAIL;
-    }
-
-    int pick = (int)(esp_random() % (uint32_t)total);
-    cJSON *item = cJSON_GetArrayItem(arr, pick);
-    const char *file_name = item ? get_str(item, "file_name") : "";
-    const char *title = item ? get_str(item, "title") : "";
 
     char image_url[512] = {0};
     build_image_url(file_name, image_url, sizeof(image_url));
@@ -421,18 +452,24 @@ esp_err_t tool_someacg_send_random_execute(const char *input_json, char *output,
         snprintf(cap_buf, sizeof(cap_buf), "%s", title);
     }
 
-    esp_err_t send_err = telegram_send_photo(chat_id, image_url, cap_buf[0] ? cap_buf : NULL);
+    esp_err_t send_err = send_image_prefer_photo(chat_id, image_url, title, cap_buf[0] ? cap_buf : NULL);
     cJSON_Delete(root);
     cJSON_Delete(in);
 
     if (send_err != ESP_OK) {
-        snprintf(output, output_size, "Error: Telegram sendPhoto failed for %s", image_url);
+        snprintf(output, output_size, "Error: Telegram send message failed for %s", image_url);
         return send_err;
     }
 
-    snprintf(output, output_size,
-             "OK: random image sent to %s (page=%d index=%d file=%s)",
-             chat_id, page, pick, file_name);
+    if (used_fallback) {
+        snprintf(output, output_size,
+                 "OK: random URL sent (fallback list) to %s (index=%d file=%s)",
+                 chat_id, pick, file_name);
+    } else {
+        snprintf(output, output_size,
+                 "OK: random URL sent to %s (page=%d index=%d file=%s)",
+                 chat_id, page, pick, file_name);
+    }
     return ESP_OK;
 }
 

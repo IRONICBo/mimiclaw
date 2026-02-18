@@ -115,7 +115,10 @@ static esp_err_t telegram_send_rich(const char *chat_id, const char *content)
     free(text_buf);
     free(scratch);
 
-    if (any_fail || text_err != ESP_OK) return ESP_FAIL;
+    if (any_fail) {
+        ESP_LOGW(TAG, "One or more sendPhoto calls failed; link-text fallback was used");
+    }
+    if (text_err != ESP_OK) return ESP_FAIL;
     return ESP_OK;
 }
 

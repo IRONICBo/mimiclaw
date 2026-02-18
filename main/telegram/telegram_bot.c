@@ -250,10 +250,10 @@ static char *tg_api_call(const char *method, const char *post_data)
     return tg_api_call_direct(method, post_data);
 }
 
-static bool tg_response_is_ok(const char *resp, const char **out_desc)
+static bool tg_response_is_ok(const char *resp, char *out_desc, size_t out_desc_size)
 {
-    if (out_desc) {
-        *out_desc = NULL;
+    if (out_desc && out_desc_size > 0) {
+        out_desc[0] = '\0';
     }
     if (!resp) {
         return false;
@@ -263,10 +263,10 @@ static bool tg_response_is_ok(const char *resp, const char **out_desc)
     if (root) {
         cJSON *ok_field = cJSON_GetObjectItem(root, "ok");
         bool ok = cJSON_IsTrue(ok_field);
-        if (!ok && out_desc) {
+        if (!ok && out_desc && out_desc_size > 0) {
             cJSON *desc = cJSON_GetObjectItem(root, "description");
             if (desc && cJSON_IsString(desc)) {
-                *out_desc = desc->valuestring;
+                snprintf(out_desc, out_desc_size, "%s", desc->valuestring);
             }
         }
         cJSON_Delete(root);
@@ -492,12 +492,12 @@ esp_err_t telegram_send_message(const char *chat_id, const char *text)
         int sent_ok = 0;
         bool markdown_failed = false;
         if (resp) {
-            const char *desc = NULL;
-            sent_ok = tg_response_is_ok(resp, &desc);
+            char desc[160] = {0};
+            sent_ok = tg_response_is_ok(resp, desc, sizeof(desc));
             if (!sent_ok) {
                 markdown_failed = true;
                 ESP_LOGI(TAG, "Markdown rejected by Telegram for %s: %s",
-                         chat_id, desc ? desc : "unknown");
+                         chat_id, desc[0] ? desc : "unknown");
             }
         }
 
@@ -518,10 +518,10 @@ esp_err_t telegram_send_message(const char *chat_id, const char *text)
                 char *resp2 = tg_api_call("sendMessage", json2);
                 free(json2);
                 if (resp2) {
-                    const char *desc2 = NULL;
-                    sent_ok = tg_response_is_ok(resp2, &desc2);
+                    char desc2[160] = {0};
+                    sent_ok = tg_response_is_ok(resp2, desc2, sizeof(desc2));
                     if (!sent_ok) {
-                        ESP_LOGE(TAG, "Plain send failed: %s", desc2 ? desc2 : "unknown");
+                        ESP_LOGE(TAG, "Plain send failed: %s", desc2[0] ? desc2 : "unknown");
                         ESP_LOGE(TAG, "Telegram raw response: %.300s", resp2);
                     }
                     free(resp2);
@@ -584,10 +584,10 @@ esp_err_t telegram_send_photo(const char *chat_id, const char *photo_url, const 
         return ESP_FAIL;
     }
 
-    const char *desc = NULL;
-    bool ok = tg_response_is_ok(resp, &desc);
+    char desc[160] = {0};
+    bool ok = tg_response_is_ok(resp, desc, sizeof(desc));
     if (!ok) {
-        ESP_LOGE(TAG, "sendPhoto failed: %s", desc ? desc : "unknown");
+        ESP_LOGE(TAG, "sendPhoto failed: %s", desc[0] ? desc : "unknown");
         ESP_LOGE(TAG, "Telegram raw response: %.300s", resp);
     }
     free(resp);

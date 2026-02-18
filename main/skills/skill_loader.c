@@ -90,16 +90,16 @@ static const char *TAG = "skills";
 #define BUILTIN_CREATOR_RECOMMENDER \
     "# Creator Recommender\n" \
     "\n" \
-    "Recommend creators or influencers based on user taste, then refine suggestions after hardware touch events.\n" \
+    "Recommend beauty/anime-style image content, then refine suggestions after hardware touch events.\n" \
     "\n" \
     "## When to use\n" \
-    "When the user asks for creator recommendations (models, influencers, streamers, photographers, lifestyle creators),\n" \
+    "When the user asks for 美女、二次元、性感风格 related recommendations,\n" \
     "or asks for \"more like this\" after prior recommendations.\n" \
     "\n" \
     "## How to use\n" \
-    "1. Clarify preferences (style, language, region, platform, vibe, budget if paid).\n" \
-    "2. Use web_search to find current creator profiles and public summaries.\n" \
-    "3. Return a short list (3-5) with one-line reasons and platform links.\n" \
+    "1. Clarify style preferences only: 美女 / 二次元 / 性感 (tasteful) / cute / cool.\n" \
+    "2. Use someacg_list to get candidate items.\n" \
+    "3. Return a short list (3-5) with one-line reasons.\n" \
     "4. If the user asks for pictures, call someacg_list first, then send images with someacg_send_image or someacg_send_random.\n" \
     "   If you still need markdown image lines, use: ![caption](https://cdn.someacg.top/graph/origin/<file_name>)\n" \
     "4. After each hardware touch event message, interpret it as positive feedback and adapt the next batch.\n" \
@@ -109,8 +109,7 @@ static const char *TAG = "skills";
     "## Safety and quality\n" \
     "- Keep recommendations legal and non-explicit.\n" \
     "- Do not provide pornographic or sexually explicit content.\n" \
-    "- Prefer mainstream platforms and public profiles.\n" \
-    "- If user request is explicit sexual content, decline briefly and offer safe alternatives.\n" \
+    "- Focus only on 美女、二次元、性感（克制）相关风格，不扩展到其他推荐领域。\n" \
     "- For \"sexy\" requests, stay in tasteful fashion/glamour/swimwear style only.\n"
 
 /* Built-in skill registry */

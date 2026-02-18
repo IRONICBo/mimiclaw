@@ -22,6 +22,7 @@ static const touch_pad_t s_touch_channel = TOUCH_PAD_NUM6;  // GPIO6
 static bool s_touch_last_active = false;
 static int64_t s_last_trigger_us = 0;
 static int64_t s_last_debug_log_us = 0;
+static uint32_t s_link_idx = 0;
 
 #define LICK_TOUCH_ENTER_RATIO_PCT   78
 #define LICK_TOUCH_RELEASE_RATIO_PCT 84
@@ -129,6 +130,28 @@ static const char *interest_band(float score)
     return "low";
 }
 
+static const char *pick_someacg_link(void)
+{
+    static const char *kFiles[] = {
+        "141529971_p0_scale.jpg",
+        "141273914_p0.jpg",
+        "141592709_p0.jpg",
+        "HBsKhIIbgAQjmXX_scale.jpeg",
+        "141499131_p0.png",
+        "141504186_p0.jpg",
+        "141447829_p1.jpg",
+        "141244995_p0.jpg",
+        "141139984_p0.png",
+        "141297294_p0.jpg",
+    };
+    static char url[256];
+    size_t n = sizeof(kFiles) / sizeof(kFiles[0]);
+    const char *f = kFiles[s_link_idx % n];
+    s_link_idx++;
+    snprintf(url, sizeof(url), "https://cdn.someacg.top/graph/origin/%s", f);
+    return url;
+}
+
 static void enqueue_outbound_text(const char *channel, const char *chat_id, const char *text)
 {
     mimi_msg_t out = {0};
@@ -173,6 +196,9 @@ static void enqueue_lick_prompt(void)
 
     enqueue_outbound_text(channel, chat_id, "Oh, you licked me.");
     enqueue_outbound_text(channel, chat_id, signal_line);
+    char image_line[320];
+    snprintf(image_line, sizeof(image_line), "![picked](%s)", pick_someacg_link());
+    enqueue_outbound_text(channel, chat_id, image_line);
 
     char text[768];
     if (humidity_ok) {
@@ -184,7 +210,9 @@ static void enqueue_lick_prompt(void)
             "- humidity_pct: %.2f\n"
             "- interest_signal: %.0f (%s)\n"
             "Respond in English.\n"
-            "If the current conversation is about recommendations, treat this as positive user feedback and continue with improved recommendations.\n"
+            "Only continue recommendations in these styles: beautiful women, anime girls, and tasteful sexy vibe.\n"
+            "Do not switch to other recommendation categories.\n"
+            "Treat this as positive user feedback and continue with improved recommendations.\n"
             "You MUST call tool someacg_send_random once (with current chat) before final response.\n"
             "First line must be exactly: Oh, you licked me.\n"
             "Second line must be: Your current interest signal is %.0f/100 (%s).\n"
@@ -199,7 +227,9 @@ static void enqueue_lick_prompt(void)
             "- humidity_pct: unavailable (%s)\n"
             "- interest_signal: %.0f (%s)\n"
             "Respond in English.\n"
-            "If the current conversation is about recommendations, treat this as positive user feedback and continue with improved recommendations.\n"
+            "Only continue recommendations in these styles: beautiful women, anime girls, and tasteful sexy vibe.\n"
+            "Do not switch to other recommendation categories.\n"
+            "Treat this as positive user feedback and continue with improved recommendations.\n"
             "You MUST call tool someacg_send_random once (with current chat) before final response.\n"
             "First line must be exactly: Oh, you licked me.\n"
             "Second line must be: Your current interest signal is %.0f/100 (%s).\n"
