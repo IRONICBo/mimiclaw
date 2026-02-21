@@ -63,6 +63,17 @@ user> Click the "Sign in" button on this page.
 - `fill` (`selector`, `value`)
 - `scroll` (`top`)
 
+## Message Protocol (Summary)
+
+Python simulator -> extension:
+
+- `{"type":"get_dom_snapshot","request_id":"..."}`
+- `{"type":"execute_action","request_id":"...","action":{...}}`
+
+Extension -> Python simulator:
+
+- `{"type":"command_result","request_id":"...","ok":true,"result":{...}}`
+
 ## Notes
 
 - This is a prototype bridge. It does not change firmware behavior by itself.
