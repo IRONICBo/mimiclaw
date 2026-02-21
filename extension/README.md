@@ -1,11 +1,26 @@
-# mimibrowser
+# Browser Extension Bridge (Preview)
 
-This directory contains a working prototype:
+This directory contains an experimental browser automation bridge for MimiClaw.
 
-- `esp32_sim_server.py`: a Python process that simulates the ESP32 controller, accepts user goals, and asks the LLM for next actions.
-- Chrome extension (`mimibrowser`): captures DOM snapshots from the active page and executes LLM-driven browser actions (back/forward/navigate/click/fill/scroll).
+It combines:
 
-## 1. Start the Python server
+- a Chrome MV3 extension (`manifest.json`, `background.js`, `content.js`, `offscreen.js`, `popup.*`), and
+- a local Python simulator (`esp32_sim_server.py`) that mimics the ESP32 side over WebSocket.
+
+## What This Is For
+
+Use this when you want to validate browser control workflows before wiring the same protocol into firmware.
+
+| Path | Best for | Runs where |
+|------|----------|------------|
+| MimiClaw firmware (`main/`) | On-device assistant + Telegram + tools | ESP32-S3 |
+| Extension bridge (`extension/`) | Browser interaction experiments and action-loop tuning | Desktop browser + local Python |
+
+The two paths share the same message pattern (`get_dom_snapshot` / `execute_action` / `command_result`) so logic can be migrated incrementally.
+
+## Quick Install
+
+### 1. Start the local simulator
 
 ```bash
 cd extension
@@ -13,50 +28,33 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# 编辑 .env 填写 OPENAI_API_KEY
+# edit .env and set OPENAI_API_KEY
 export $(grep -v '^#' .env | xargs)
 python esp32_sim_server.py
 ```
 
-Server endpoint: `ws://127.0.0.1:8765/ws`
+Default endpoint: `ws://127.0.0.1:8765/ws`
 
-## 2. Install the Chrome extension
+### 2. Load the extension in Chrome
 
 1. Open `chrome://extensions`
 2. Enable `Developer mode`
 3. Click `Load unpacked`
-4. Select this `extension` directory
+4. Select this `extension/` directory
 
-## 3. Runtime flow
+### 3. Run a task
 
-1. Open the target webpage in your browser.
-2. Keep the extension loaded. In popup, you can check connection status, toggle listener on/off, and change WebSocket IP.
+1. Open a target webpage.
+2. In the extension popup, verify connection status and keep listener enabled.
 3. In the Python terminal, enter a goal, for example:
 
 ```text
 user> Click the "Sign in" button on this page.
 ```
 
-4. Python requests DOM state, calls the LLM for one next action, and sends it to the extension.
-5. The loop continues until the LLM returns `done`, then the terminal prints the final answer.
+4. The simulator requests DOM state, asks the LLM for one action, sends it to the extension, and repeats until completion.
 
-## Stability mechanisms
-
-- WebSocket is kept in an `offscreen document`, so MV3 service worker sleep does not break the bridge.
-- Heartbeat + auto re-register: `ping/pong` and periodic `register`, with automatic reconnect on disconnect.
-- Idempotent deduplication using `request_id`: repeated requests do not re-run browser actions.
-- In-page planning overlay displays goal/step/reason/result and survives page refresh.
-- Listener switch in popup can fully disable command listening (and stop reconnect) when turned off.
-
-## Core message protocol
-
-- Python -> Extension
-  - `{"type":"get_dom_snapshot","request_id":"..."}`
-  - `{"type":"execute_action","request_id":"...","action":{...}}`
-- Extension -> Python
-  - `{"type":"command_result","request_id":"...","ok":true,"result":{...}}`
-
-## Supported actions
+## Supported Actions
 
 - `navigate` (`url`)
 - `back`
@@ -64,9 +62,9 @@ user> Click the "Sign in" button on this page.
 - `click` (`selector` or `text`)
 - `fill` (`selector`, `value`)
 - `scroll` (`top`)
-- `done` (LLM output only, not sent to extension)
 
 ## Notes
 
-- This is a bridge prototype for “ESP32 controlling a browser”. You can move the same RPC protocol from `esp32_sim_server.py` to real ESP32 firmware later.
-- Some websites have CSP/cross-origin constraints that may affect DOM extraction or action reliability.
+- This is a prototype bridge. It does not change firmware behavior by itself.
+- Some websites enforce CSP/cross-origin limits that can reduce extraction/action reliability.
+- Offscreen + heartbeat/re-register logic is used to keep the WebSocket bridge stable under MV3 service-worker lifecycle constraints.
