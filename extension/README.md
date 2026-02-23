@@ -79,3 +79,9 @@ Extension -> Python simulator:
 - This is a prototype bridge. It does not change firmware behavior by itself.
 - Some websites enforce CSP/cross-origin limits that can reduce extraction/action reliability.
 - Offscreen + heartbeat/re-register logic is used to keep the WebSocket bridge stable under MV3 service-worker lifecycle constraints.
+
+## Troubleshooting
+
+- Popup shows disconnected: verify `esp32_sim_server.py` is running and `ws://127.0.0.1:8765/ws` is reachable.
+- Actions do not execute: keep the target tab on an `http://` or `https://` page (not `chrome://` or extension pages).
+- No LLM output: confirm `OPENAI_API_KEY` is exported in the simulator shell.
