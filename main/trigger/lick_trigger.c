@@ -5,8 +5,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include "bus/message_bus.h"
-#include "buttons/button_driver.h"
+#include "driver/touch_sensor_common.h"
+#include "driver/touch_sensor_legacy.h"
+#include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "imu/QMI8658.h"
@@ -15,6 +18,63 @@
 static const char *TAG = "lick_trigger";
 
 static TaskHandle_t s_lick_task = NULL;
+static const touch_pad_t s_touch_channel = TOUCH_PAD_NUM1;  // GPIO1
+static bool s_touch_last_active = false;
+static int64_t s_last_trigger_us = 0;
+
+#define LICK_TOUCH_ENTER_RATIO_PCT   78
+#define LICK_TOUCH_RELEASE_RATIO_PCT 84
+#define LICK_TOUCH_COOLDOWN_US       (1500LL * 1000)
+
+static esp_err_t lick_touch_init(void)
+{
+    ESP_RETURN_ON_ERROR(touch_pad_init(), TAG, "touch init failed");
+    ESP_RETURN_ON_ERROR(touch_pad_set_fsm_mode(TOUCH_FSM_MODE_TIMER), TAG, "set FSM mode failed");
+    ESP_RETURN_ON_ERROR(touch_pad_config(s_touch_channel), TAG, "touch channel config failed");
+    ESP_RETURN_ON_ERROR(touch_pad_set_charge_discharge_times(TOUCH_PAD_MEASURE_CYCLE_DEFAULT),
+                        TAG, "set charge/discharge failed");
+    ESP_RETURN_ON_ERROR(touch_pad_set_measurement_interval(TOUCH_PAD_SLEEP_CYCLE_DEFAULT),
+                        TAG, "set interval failed");
+
+    touch_filter_config_t filter_cfg = {
+        .mode = TOUCH_PAD_FILTER_IIR_16,
+        .debounce_cnt = 1,
+        .noise_thr = 1,
+        .jitter_step = 4,
+        .smh_lvl = TOUCH_PAD_SMOOTH_IIR_2,
+    };
+    ESP_RETURN_ON_ERROR(touch_pad_filter_set_config(&filter_cfg), TAG, "filter config failed");
+    ESP_RETURN_ON_ERROR(touch_pad_filter_enable(), TAG, "filter enable failed");
+    ESP_RETURN_ON_ERROR(touch_pad_fsm_start(), TAG, "touch FSM start failed");
+
+    // Give filter/benchmark a short warmup window.
+    vTaskDelay(pdMS_TO_TICKS(300));
+
+    ESP_LOGI(TAG, "Touch channel enabled: TOUCH_PAD_NUM%d (GPIO%d)",
+             (int)s_touch_channel, (int)s_touch_channel);
+    return ESP_OK;
+}
+
+static bool lick_touch_is_active(void)
+{
+    uint32_t smooth = 0;
+    uint32_t benchmark = 0;
+
+    if (touch_pad_filter_read_smooth(s_touch_channel, &smooth) != ESP_OK) {
+        return false;
+    }
+    if (touch_pad_read_benchmark(s_touch_channel, &benchmark) != ESP_OK || benchmark == 0) {
+        return false;
+    }
+
+    uint32_t enter_threshold = (benchmark * LICK_TOUCH_ENTER_RATIO_PCT) / 100;
+    uint32_t release_threshold = (benchmark * LICK_TOUCH_RELEASE_RATIO_PCT) / 100;
+
+    if (s_touch_last_active) {
+        return smooth < release_threshold;
+    }
+    return smooth < enter_threshold;
+}
 
 static void route_target(char *channel, size_t channel_size, char *chat_id, size_t chat_id_size)
 {
@@ -88,16 +148,23 @@ static void enqueue_lick_prompt(void)
 static void lick_trigger_task(void *arg)
 {
     (void)arg;
-    while (1) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        enqueue_lick_prompt();
-    }
-}
 
-static void on_button_event(PressEvent event)
-{
-    if (event == SINGLE_CLICK && s_lick_task) {
-        xTaskNotifyGive(s_lick_task);
+    if (lick_touch_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Touch init failed, lick trigger task stopped");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    while (1) {
+        bool active = lick_touch_is_active();
+        int64_t now = esp_timer_get_time();
+
+        if (active && !s_touch_last_active && (now - s_last_trigger_us > LICK_TOUCH_COOLDOWN_US)) {
+            s_last_trigger_us = now;
+            enqueue_lick_prompt();
+        }
+        s_touch_last_active = active;
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 
@@ -114,8 +181,6 @@ esp_err_t lick_trigger_init(void)
         s_lick_task = NULL;
         return ESP_FAIL;
     }
-
-    button_set_event_callback(on_button_event);
-    ESP_LOGI(TAG, "Lick trigger initialized (SINGLE_CLICK -> env sample -> agent)");
+    ESP_LOGI(TAG, "Lick trigger initialized (touch electrode -> env sample -> agent)");
     return ESP_OK;
 }
