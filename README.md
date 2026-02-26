@@ -253,6 +253,14 @@ Technical details live in the `docs/` folder:
 
 Please read **[CONTRIBUTING.md](CONTRIBUTING.md)** before opening issues or pull requests.
 
+## Contributors
+
+Thanks to everyone who has contributed to MimiClaw.
+
+<a href="https://github.com/memovai/mimiclaw/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=memovai/mimiclaw" alt="MimiClaw contributors" />
+</a>
+
 ## License
 
 MIT
