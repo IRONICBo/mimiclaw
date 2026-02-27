@@ -9,8 +9,8 @@
 static const char *TAG = "skills";
 
 /*
- * Built-in skills are now stored as markdown files in spiffs_data/skills/
- * and pre-flashed into the SPIFFS partition at build time.
+ * Skills are stored as markdown files in spiffs_data/skills/
+ * and flashed into the SPIFFS partition at build time.
  */
 
 esp_err_t skill_loader_init(void)
@@ -42,10 +42,10 @@ esp_err_t skill_loader_init(void)
 /* ── Build skills summary for system prompt ──────────────────── */
 
 /**
- * Parse first line as title: expects "# Title"
- * Returns pointer past "# " or the line itself if no prefix.
+ * Parse first line as title: expects "# Title".
+ * Writes the title (without "# " prefix) into out.
  */
-static const char *extract_title(const char *line, size_t len, char *out, size_t out_size)
+static void extract_title(const char *line, size_t len, char *out, size_t out_size)
 {
     const char *start = line;
     if (len >= 2 && line[0] == '#' && line[1] == ' ') {
@@ -61,7 +61,6 @@ static const char *extract_title(const char *line, size_t len, char *out, size_t
     size_t copy = len < out_size - 1 ? len : out_size - 1;
     memcpy(out, start, copy);
     out[copy] = '\0';
-    return out;
 }
 
 /**
