@@ -13,42 +13,29 @@ static const char *TAG = "skills";
  * and pre-flashed into the SPIFFS partition at build time.
  */
 
-/* ── Install built-in skills if missing ──────────────────────── */
-
-static void install_builtin(const builtin_skill_t *skill)
-{
-    char path[64];
-    snprintf(path, sizeof(path), "%s%s.md", MIMI_SKILLS_PREFIX, skill->filename);
-
-    /* Check if already exists */
-    FILE *f = fopen(path, "r");
-    if (f) {
-        fclose(f);
-        ESP_LOGD(TAG, "Skill exists: %s", path);
-        return;
-    }
-
-    /* Write built-in skill */
-    f = fopen(path, "w");
-    if (!f) {
-        ESP_LOGE(TAG, "Cannot write skill: %s", path);
-        return;
-    }
-
-    fputs(skill->content, f);
-    fclose(f);
-    ESP_LOGI(TAG, "Installed built-in skill: %s", path);
-}
-
 esp_err_t skill_loader_init(void)
 {
     ESP_LOGI(TAG, "Initializing skills system");
 
-    for (size_t i = 0; i < NUM_BUILTINS; i++) {
-        install_builtin(&s_builtins[i]);
+    DIR *dir = opendir(MIMI_SPIFFS_BASE);
+    if (!dir) {
+        ESP_LOGW(TAG, "Cannot open SPIFFS — skills may not be available");
+        return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Skills system ready (%d built-in)", (int)NUM_BUILTINS);
+    int count = 0;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        const char *name = ent->d_name;
+        size_t len = strlen(name);
+        if (strncmp(name, "skills/", 7) == 0 && len > 10 &&
+            strcmp(name + len - 3, ".md") == 0) {
+            count++;
+        }
+    }
+    closedir(dir);
+
+    ESP_LOGI(TAG, "Skills system ready (%d skills on SPIFFS)", count);
     return ESP_OK;
 }
 
