@@ -87,6 +87,29 @@ static const char *TAG = "skills";
     "2. Translate directly using your language knowledge\\n" \
     "3. For specialized terms, use web_search to verify\\n\"\n"
 
+#define BUILTIN_CREATOR_RECOMMENDER \
+    "# Creator Recommender\n" \
+    "\n" \
+    "Recommend creators or influencers based on user taste, then refine suggestions after hardware touch events.\n" \
+    "\n" \
+    "## When to use\n" \
+    "When the user asks for creator recommendations (models, influencers, streamers, photographers, lifestyle creators),\n" \
+    "or asks for \"more like this\" after prior recommendations.\n" \
+    "\n" \
+    "## How to use\n" \
+    "1. Clarify preferences (style, language, region, platform, vibe, budget if paid).\n" \
+    "2. Use web_search to find current creator profiles and public summaries.\n" \
+    "3. Return a short list (3-5) with one-line reasons and platform links.\n" \
+    "4. After each hardware touch event message, interpret it as positive feedback and adapt the next batch.\n" \
+    "5. If temperature/humidity data is present, add one playful English line that references the sensor reading,\n" \
+    "   then continue recommendations.\n" \
+    "\n" \
+    "## Safety and quality\n" \
+    "- Keep recommendations legal and non-explicit.\n" \
+    "- Do not provide pornographic or sexually explicit content.\n" \
+    "- Prefer mainstream platforms and public profiles.\n" \
+    "- If user request is explicit sexual content, decline briefly and offer safe alternatives.\n"
+
 /* Built-in skill registry */
 typedef struct {
     const char *filename;   /* e.g. "weather" */
@@ -97,6 +120,7 @@ static const builtin_skill_t s_builtins[] = {
     { "weather",        BUILTIN_WEATHER        },
     { "daily-briefing", BUILTIN_DAILY_BRIEFING },
     { "skill-creator",  BUILTIN_SKILL_CREATOR  },
+    { "creator-recommender", BUILTIN_CREATOR_RECOMMENDER },
 };
 
 #define NUM_BUILTINS (sizeof(s_builtins) / sizeof(s_builtins[0]))

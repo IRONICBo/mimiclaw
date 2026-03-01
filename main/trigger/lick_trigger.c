@@ -144,7 +144,9 @@ static void enqueue_lick_prompt(void)
             "Measured data:\n"
             "- temperature_c: %.2f\n"
             "- humidity_pct: %.2f\n"
-            "Please summarize this state and recommend the next step in concise bullets.",
+            "Respond in English.\n"
+            "If the current conversation is about recommendations, treat this as positive user feedback and continue with improved recommendations.\n"
+            "Include one short playful line referencing the current sensor values, then provide concise next suggestions.",
             temp_c, hum_pct);
     } else {
         snprintf(
@@ -153,7 +155,10 @@ static void enqueue_lick_prompt(void)
             "Measured data:\n"
             "- temperature_c: %.2f\n"
             "- humidity_pct: unavailable (%s)\n"
-            "Please summarize the state and recommend the next step, including sensor troubleshooting guidance.",
+            "Respond in English.\n"
+            "If the current conversation is about recommendations, treat this as positive user feedback and continue with improved recommendations.\n"
+            "Include one short playful line and then concise suggestions.\n"
+            "Also mention brief sensor troubleshooting guidance for humidity.",
             temp_c, esp_err_to_name(env_err));
     }
 
