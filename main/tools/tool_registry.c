@@ -3,6 +3,7 @@
 #include "tools/tool_get_time.h"
 #include "tools/tool_files.h"
 #include "tools/tool_cron.h"
+#include "tools/tool_pixiviz.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -67,6 +68,54 @@ esp_err_t tool_registry_init(void)
         .execute = tool_web_search_execute,
     };
     register_tool(&ws);
+
+
+    /* Register someacg_list */
+    mimi_tool_t sal = {
+        .name = "someacg_list",
+        .description = "Fetch image list from someacg API with browser-like headers. Returns JSON items with file_name and image_url.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"page\":{\"type\":\"integer\",\"description\":\"Page number (>=1), default 1\"}"
+            "},"
+            "\"required\":[]}",
+        .execute = tool_someacg_list_execute,
+    };
+    register_tool(&sal);
+
+    /* Register someacg_send_image */
+    mimi_tool_t ssi = {
+        .name = "someacg_send_image",
+        .description = "Send an image to Telegram from someacg by file_name or direct image_url.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"file_name\":{\"type\":\"string\",\"description\":\"someacg file_name, e.g. 141273914_p0.jpg\"},"
+            "\"image_url\":{\"type\":\"string\",\"description\":\"Optional direct HTTPS image URL\"},"
+            "\"chat_id\":{\"type\":\"string\",\"description\":\"Telegram chat ID (optional in active Telegram session)\"},"
+            "\"caption\":{\"type\":\"string\",\"description\":\"Optional caption\"}"
+            "},"
+            "\"required\":[]}",
+        .execute = tool_someacg_send_image_execute,
+    };
+    register_tool(&ssi);
+
+    /* Register someacg_send_random */
+    mimi_tool_t ssr = {
+        .name = "someacg_send_random",
+        .description = "Fetch someacg list, pick one random item, and send it to Telegram as photo.",
+        .input_schema_json =
+            "{\"type\":\"object\","
+            "\"properties\":{"
+            "\"page\":{\"type\":\"integer\",\"description\":\"Page number (>=1), default 1\"},"
+            "\"chat_id\":{\"type\":\"string\",\"description\":\"Telegram chat ID (optional in active Telegram session)\"},"
+            "\"caption\":{\"type\":\"string\",\"description\":\"Optional caption override\"}"
+            "},"
+            "\"required\":[]}",
+        .execute = tool_someacg_send_random_execute,
+    };
+    register_tool(&ssr);
 
     /* Register get_current_time */
     mimi_tool_t gt = {

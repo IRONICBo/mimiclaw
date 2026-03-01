@@ -185,10 +185,10 @@ static void enqueue_lick_prompt(void)
             "- interest_signal: %.0f (%s)\n"
             "Respond in English.\n"
             "If the current conversation is about recommendations, treat this as positive user feedback and continue with improved recommendations.\n"
+            "You MUST call tool someacg_send_random once (with current chat) before final response.\n"
             "First line must be exactly: Oh, you licked me.\n"
             "Second line must be: Your current interest signal is %.0f/100 (%s).\n"
-            "Then provide new recommendations and include 2 markdown image lines in this format:\n"
-            "![caption](https://...)\n",
+            "Then provide new recommendations.\n",
             temp_c, hum_pct, signal, interest_band(signal), signal, interest_band(signal));
     } else {
         snprintf(
@@ -200,10 +200,10 @@ static void enqueue_lick_prompt(void)
             "- interest_signal: %.0f (%s)\n"
             "Respond in English.\n"
             "If the current conversation is about recommendations, treat this as positive user feedback and continue with improved recommendations.\n"
+            "You MUST call tool someacg_send_random once (with current chat) before final response.\n"
             "First line must be exactly: Oh, you licked me.\n"
             "Second line must be: Your current interest signal is %.0f/100 (%s).\n"
-            "Then provide new recommendations and include 2 markdown image lines in this format:\n"
-            "![caption](https://...)\n"
+            "Then provide new recommendations.\n"
             "Also mention brief sensor troubleshooting guidance for humidity.",
             temp_c, esp_err_to_name(env_err), signal, interest_band(signal), signal, interest_band(signal));
     }

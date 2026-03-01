@@ -549,6 +549,7 @@ esp_err_t telegram_send_message(const char *chat_id, const char *text)
     return all_ok ? ESP_OK : ESP_FAIL;
 }
 
+
 esp_err_t telegram_send_photo(const char *chat_id, const char *photo_url, const char *caption)
 {
     if (s_bot_token[0] == '\0') {
