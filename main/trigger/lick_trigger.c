@@ -18,9 +18,10 @@
 static const char *TAG = "lick_trigger";
 
 static TaskHandle_t s_lick_task = NULL;
-static const touch_pad_t s_touch_channel = TOUCH_PAD_NUM1;  // GPIO1
+static const touch_pad_t s_touch_channel = TOUCH_PAD_NUM6;  // GPIO6
 static bool s_touch_last_active = false;
 static int64_t s_last_trigger_us = 0;
+static int64_t s_last_debug_log_us = 0;
 
 #define LICK_TOUCH_ENTER_RATIO_PCT   78
 #define LICK_TOUCH_RELEASE_RATIO_PCT 84
@@ -76,6 +77,29 @@ static bool lick_touch_is_active(void)
     return smooth < enter_threshold;
 }
 
+static void lick_touch_debug_log(void)
+{
+    uint32_t smooth = 0;
+    uint32_t benchmark = 0;
+    if (touch_pad_filter_read_smooth(s_touch_channel, &smooth) != ESP_OK) {
+        return;
+    }
+    if (touch_pad_read_benchmark(s_touch_channel, &benchmark) != ESP_OK || benchmark == 0) {
+        return;
+    }
+
+    uint32_t enter_threshold = (benchmark * LICK_TOUCH_ENTER_RATIO_PCT) / 100;
+    uint32_t release_threshold = (benchmark * LICK_TOUCH_RELEASE_RATIO_PCT) / 100;
+    ESP_LOGI(TAG,
+             "Touch debug GPIO%d: smooth=%lu benchmark=%lu enter=%lu release=%lu active=%d",
+             (int)s_touch_channel,
+             (unsigned long)smooth,
+             (unsigned long)benchmark,
+             (unsigned long)enter_threshold,
+             (unsigned long)release_threshold,
+             (int)s_touch_last_active);
+}
+
 static void route_target(char *channel, size_t channel_size, char *chat_id, size_t chat_id_size)
 {
     if (message_bus_get_latest_client_context(channel, channel_size, chat_id, chat_id_size) == ESP_OK) {
@@ -96,11 +120,16 @@ static void enqueue_lick_prompt(void)
     bool humidity_ok = (env_err == ESP_OK);
 
     if (!humidity_ok) {
+        ESP_LOGW(TAG, "AHT20 read failed: %s, fallback to QMI8658 temperature", esp_err_to_name(env_err));
         esp_err_t temp_err = QMI8658_Read_Temperature(&temp_c);
         if (temp_err != ESP_OK) {
             ESP_LOGW(TAG, "Fallback temperature read failed: %s", esp_err_to_name(temp_err));
             temp_c = 0.0f;
+        } else {
+            ESP_LOGI(TAG, "Fallback temperature: %.2f C", temp_c);
         }
+    } else {
+        ESP_LOGI(TAG, "AHT20 sample: temperature=%.2f C, humidity=%.2f %%", temp_c, hum_pct);
     }
 
     char channel[16] = {0};
@@ -159,8 +188,14 @@ static void lick_trigger_task(void *arg)
         bool active = lick_touch_is_active();
         int64_t now = esp_timer_get_time();
 
+        if (now - s_last_debug_log_us > 1000LL * 1000) {
+            s_last_debug_log_us = now;
+            lick_touch_debug_log();
+        }
+
         if (active && !s_touch_last_active && (now - s_last_trigger_us > LICK_TOUCH_COOLDOWN_US)) {
             s_last_trigger_us = now;
+            ESP_LOGI(TAG, "Touch triggered on GPIO%d", (int)s_touch_channel);
             enqueue_lick_prompt();
         }
         s_touch_last_active = active;
