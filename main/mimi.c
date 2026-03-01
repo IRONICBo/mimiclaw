@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
+#include <stdbool.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -29,6 +31,93 @@
 #include "trigger/lick_trigger.h"
 
 static const char *TAG = "mimi";
+
+static char *trim_left(char *s)
+{
+    while (s && *s && isspace((unsigned char)*s)) s++;
+    return s;
+}
+
+/* Parse one markdown image line: ![caption](https://...)
+ * Returns true when parsed and values are copied into out buffers.
+ */
+static bool parse_markdown_image_line(const char *line, char *out_url, size_t out_url_sz,
+                                      char *out_caption, size_t out_caption_sz)
+{
+    if (!line || strncmp(line, "![", 2) != 0) return false;
+    const char *cap_end = strstr(line + 2, "](");
+    if (!cap_end) return false;
+    const char *url_start = cap_end + 2;
+    const char *url_end = strchr(url_start, ')');
+    if (!url_end || url_end <= url_start) return false;
+
+    size_t cap_len = (size_t)(cap_end - (line + 2));
+    size_t url_len = (size_t)(url_end - url_start);
+    if (url_len == 0 || url_len >= out_url_sz) return false;
+
+    memcpy(out_url, url_start, url_len);
+    out_url[url_len] = '\0';
+    if (strncmp(out_url, "https://", 8) != 0) return false;
+
+    if (out_caption && out_caption_sz > 0) {
+        size_t cpy = cap_len < (out_caption_sz - 1) ? cap_len : (out_caption_sz - 1);
+        memcpy(out_caption, line + 2, cpy);
+        out_caption[cpy] = '\0';
+    }
+    return true;
+}
+
+/* Telegram dispatcher with image support.
+ * If content includes markdown image lines (![]()), images are sent via sendPhoto.
+ * Remaining text is sent via sendMessage.
+ */
+static esp_err_t telegram_send_rich(const char *chat_id, const char *content)
+{
+    if (!chat_id || !content) return ESP_ERR_INVALID_ARG;
+
+    size_t n = strlen(content);
+    char *scratch = malloc(n + 1);
+    if (!scratch) return ESP_ERR_NO_MEM;
+    memcpy(scratch, content, n + 1);
+
+    char *text_buf = calloc(1, n + 1);
+    if (!text_buf) {
+        free(scratch);
+        return ESP_ERR_NO_MEM;
+    }
+
+    bool any_fail = false;
+    size_t text_off = 0;
+    char *save = NULL;
+    for (char *line = strtok_r(scratch, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        char *trim = trim_left(line);
+        char image_url[384] = {0};
+        char caption[128] = {0};
+
+        if (parse_markdown_image_line(trim, image_url, sizeof(image_url), caption, sizeof(caption))) {
+            esp_err_t e = telegram_send_photo(chat_id, image_url, caption[0] ? caption : NULL);
+            if (e != ESP_OK) {
+                any_fail = true;
+                ESP_LOGW(TAG, "sendPhoto failed, fallback to text URL");
+                text_off += snprintf(text_buf + text_off, n + 1 - text_off, "%s\n", image_url);
+            }
+            continue;
+        }
+
+        text_off += snprintf(text_buf + text_off, n + 1 - text_off, "%s\n", line);
+    }
+
+    esp_err_t text_err = ESP_OK;
+    if (text_buf[0] != '\0') {
+        text_err = telegram_send_message(chat_id, text_buf);
+    }
+
+    free(text_buf);
+    free(scratch);
+
+    if (any_fail || text_err != ESP_OK) return ESP_FAIL;
+    return ESP_OK;
+}
 
 static esp_err_t init_nvs(void)
 {
@@ -75,7 +164,7 @@ static void outbound_dispatch_task(void *arg)
         ESP_LOGI(TAG, "Dispatching response to %s:%s", msg.channel, msg.chat_id);
 
         if (strcmp(msg.channel, MIMI_CHAN_TELEGRAM) == 0) {
-            esp_err_t send_err = telegram_send_message(msg.chat_id, msg.content);
+            esp_err_t send_err = telegram_send_rich(msg.chat_id, msg.content);
             if (send_err != ESP_OK) {
                 ESP_LOGE(TAG, "Telegram send failed for %s: %s", msg.chat_id, esp_err_to_name(send_err));
             } else {

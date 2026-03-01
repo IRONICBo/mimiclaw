@@ -112,6 +112,35 @@ static void route_target(char *channel, size_t channel_size, char *chat_id, size
     chat_id[chat_id_size - 1] = '\0';
 }
 
+static float compute_interest_signal(float temp_c)
+{
+    /* Map temperature to 0-100 interest score for playful feedback. */
+    float score = (temp_c - 15.0f) * 4.0f;
+    if (score < 0.0f) score = 0.0f;
+    if (score > 100.0f) score = 100.0f;
+    return score;
+}
+
+static const char *interest_band(float score)
+{
+    if (score >= 80.0f) return "very high";
+    if (score >= 55.0f) return "high";
+    if (score >= 30.0f) return "medium";
+    return "low";
+}
+
+static void enqueue_outbound_text(const char *channel, const char *chat_id, const char *text)
+{
+    mimi_msg_t out = {0};
+    strncpy(out.channel, channel, sizeof(out.channel) - 1);
+    strncpy(out.chat_id, chat_id, sizeof(out.chat_id) - 1);
+    out.content = strdup(text);
+    if (!out.content) return;
+    if (message_bus_push_outbound(&out) != ESP_OK) {
+        free(out.content);
+    }
+}
+
 static void enqueue_lick_prompt(void)
 {
     float temp_c = 0.0f;
@@ -136,7 +165,16 @@ static void enqueue_lick_prompt(void)
     char chat_id[32] = {0};
     route_target(channel, sizeof(channel), chat_id, sizeof(chat_id));
 
-    char text[512];
+    float signal = compute_interest_signal(temp_c);
+    char signal_line[192];
+    snprintf(signal_line, sizeof(signal_line),
+             "Your current interest signal is %.0f/100 (%s), estimated from temperature %.2f C.",
+             signal, interest_band(signal), temp_c);
+
+    enqueue_outbound_text(channel, chat_id, "Oh, you licked me.");
+    enqueue_outbound_text(channel, chat_id, signal_line);
+
+    char text[768];
     if (humidity_ok) {
         snprintf(
             text, sizeof(text),
@@ -144,10 +182,14 @@ static void enqueue_lick_prompt(void)
             "Measured data:\n"
             "- temperature_c: %.2f\n"
             "- humidity_pct: %.2f\n"
+            "- interest_signal: %.0f (%s)\n"
             "Respond in English.\n"
             "If the current conversation is about recommendations, treat this as positive user feedback and continue with improved recommendations.\n"
-            "Include one short playful line referencing the current sensor values, then provide concise next suggestions.",
-            temp_c, hum_pct);
+            "First line must be exactly: Oh, you licked me.\n"
+            "Second line must be: Your current interest signal is %.0f/100 (%s).\n"
+            "Then provide new recommendations and include 2 markdown image lines in this format:\n"
+            "![caption](https://...)\n",
+            temp_c, hum_pct, signal, interest_band(signal), signal, interest_band(signal));
     } else {
         snprintf(
             text, sizeof(text),
@@ -155,11 +197,15 @@ static void enqueue_lick_prompt(void)
             "Measured data:\n"
             "- temperature_c: %.2f\n"
             "- humidity_pct: unavailable (%s)\n"
+            "- interest_signal: %.0f (%s)\n"
             "Respond in English.\n"
             "If the current conversation is about recommendations, treat this as positive user feedback and continue with improved recommendations.\n"
-            "Include one short playful line and then concise suggestions.\n"
+            "First line must be exactly: Oh, you licked me.\n"
+            "Second line must be: Your current interest signal is %.0f/100 (%s).\n"
+            "Then provide new recommendations and include 2 markdown image lines in this format:\n"
+            "![caption](https://...)\n"
             "Also mention brief sensor troubleshooting guidance for humidity.",
-            temp_c, esp_err_to_name(env_err));
+            temp_c, esp_err_to_name(env_err), signal, interest_band(signal), signal, interest_band(signal));
     }
 
     mimi_msg_t msg = {0};

@@ -100,6 +100,9 @@ static const char *TAG = "skills";
     "1. Clarify preferences (style, language, region, platform, vibe, budget if paid).\n" \
     "2. Use web_search to find current creator profiles and public summaries.\n" \
     "3. Return a short list (3-5) with one-line reasons and platform links.\n" \
+    "4. If the user asks for pictures, include 2-4 free, public image links using markdown image lines:\n" \
+    "   ![caption](https://...)\n" \
+    "   Prefer legal free sources like Unsplash, Pexels, Pixabay, Wikimedia Commons.\n" \
     "4. After each hardware touch event message, interpret it as positive feedback and adapt the next batch.\n" \
     "5. If temperature/humidity data is present, add one playful English line that references the sensor reading,\n" \
     "   then continue recommendations.\n" \
@@ -108,7 +111,8 @@ static const char *TAG = "skills";
     "- Keep recommendations legal and non-explicit.\n" \
     "- Do not provide pornographic or sexually explicit content.\n" \
     "- Prefer mainstream platforms and public profiles.\n" \
-    "- If user request is explicit sexual content, decline briefly and offer safe alternatives.\n"
+    "- If user request is explicit sexual content, decline briefly and offer safe alternatives.\n" \
+    "- For \"sexy\" requests, stay in tasteful fashion/glamour/swimwear style only.\n"
 
 /* Built-in skill registry */
 typedef struct {

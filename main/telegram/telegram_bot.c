@@ -549,6 +549,50 @@ esp_err_t telegram_send_message(const char *chat_id, const char *text)
     return all_ok ? ESP_OK : ESP_FAIL;
 }
 
+esp_err_t telegram_send_photo(const char *chat_id, const char *photo_url, const char *caption)
+{
+    if (s_bot_token[0] == '\0') {
+        ESP_LOGW(TAG, "Cannot send photo: no bot token");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!chat_id || !photo_url || photo_url[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    cJSON *body = cJSON_CreateObject();
+    if (!body) {
+        return ESP_ERR_NO_MEM;
+    }
+    cJSON_AddStringToObject(body, "chat_id", chat_id);
+    cJSON_AddStringToObject(body, "photo", photo_url);
+    if (caption && caption[0]) {
+        cJSON_AddStringToObject(body, "caption", caption);
+    }
+
+    char *json_str = cJSON_PrintUnformatted(body);
+    cJSON_Delete(body);
+    if (!json_str) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGI(TAG, "Sending telegram photo to %s: %.96s", chat_id, photo_url);
+    char *resp = tg_api_call("sendPhoto", json_str);
+    free(json_str);
+    if (!resp) {
+        ESP_LOGE(TAG, "sendPhoto failed: no HTTP response");
+        return ESP_FAIL;
+    }
+
+    const char *desc = NULL;
+    bool ok = tg_response_is_ok(resp, &desc);
+    if (!ok) {
+        ESP_LOGE(TAG, "sendPhoto failed: %s", desc ? desc : "unknown");
+        ESP_LOGE(TAG, "Telegram raw response: %.300s", resp);
+    }
+    free(resp);
+    return ok ? ESP_OK : ESP_FAIL;
+}
+
 esp_err_t telegram_set_token(const char *token)
 {
     nvs_handle_t nvs;

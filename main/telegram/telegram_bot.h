@@ -21,7 +21,14 @@ esp_err_t telegram_bot_start(void);
 esp_err_t telegram_send_message(const char *chat_id, const char *text);
 
 /**
+ * Send an image by public HTTPS URL to a Telegram chat.
+ * @param chat_id   Telegram chat ID (numeric string)
+ * @param photo_url Direct image URL (HTTPS)
+ * @param caption   Optional caption (nullable)
+ */
+esp_err_t telegram_send_photo(const char *chat_id, const char *photo_url, const char *caption);
+
+/**
  * Save the Telegram bot token to NVS.
  */
 esp_err_t telegram_set_token(const char *token);
-
