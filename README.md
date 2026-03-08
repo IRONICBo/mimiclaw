@@ -291,6 +291,7 @@ Technical details live in the `docs/` folder:
 
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — system design, module map, task layout, memory budget, protocols, flash partitions
 - **[docs/TODO.md](docs/TODO.md)** — feature gap tracker and roadmap
+- **[docs/im-integration/](docs/im-integration/README.md)** — IM channel integration guides (Feishu, etc.)
 
 ## Contributing
 
@@ -314,4 +315,10 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw) and [Nanobot](https
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=memovai/mimiclaw&type=Date)](https://star-history.com/#memovai/mimiclaw&Date)
+<a href="https://www.star-history.com/?repos=memovai%2Fmimiclaw&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=memovai/mimiclaw&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=memovai/mimiclaw&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=memovai/mimiclaw&type=date&legend=top-left" />
+ </picture>
+</a>
