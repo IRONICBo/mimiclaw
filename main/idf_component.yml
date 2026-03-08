@@ -15,4 +15,3 @@ dependencies:
   #   # All dependencies of `main` are public by default.
   #   public: true
   espressif/esp_websocket_client: ^1.4.0
-  mr9you/micropython-helper: "~1.22.1"
